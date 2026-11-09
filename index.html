@@ -43,6 +43,8 @@
   #threedBody{flex:1;min-height:0}
   #threedBody canvas{display:block}
   #threedInfo{padding:6px 12px;background:#141a26;color:#9fb2c8}
+  #tdLegend{display:flex;gap:8px;align-items:center;padding:4px 12px;background:#141a26;color:#cfe0f2;font-size:11.5px}
+  #tdLegBar{flex:1;height:10px;border-radius:5px;background:#333}
   .dive-off{opacity:.45}
   .dive-outview{opacity:.45}
   .bag-outview{opacity:.6}
@@ -77,6 +79,8 @@
     <div class="chk"><label><input type="checkbox" id="showClasEnds" checked> CLAS潜航開始／浮上ポイント（青ラベル。CLASが無い・遅い浮上はGPS単独測位で代替）を表示</label></div>
     <div class="chk"><label><input type="checkbox" id="showKmz" checked> 調査地点（KMZ）を表示</label></div>
     <div class="chk"><label><input type="checkbox" id="alignAll"> すべての潜航をCLAS一直線回転にする</label></div>
+    <div class="chk"><label><input type="checkbox" id="showNoSite"> 調査地点のない潜航も表示</label>
+      <span class="small">（最寄り調査地点から <select id="siteThr"><option value="150">150</option><option value="200" selected>200</option><option value="300">300</option></select> m超は「地点なし」）</span></div>
     <div class="chk"><label><input type="checkbox" id="hideBadFit"> 芝刈り航行できていない潜航を隠す</label>
       <span class="small">（経路フィット &gt; <select id="fitThr"><option value="1">1</option><option value="2" selected>2</option><option value="5">5</option></select> m の潜航。個別の表示ON/OFFは各ログの潜航欄でも可能）</span></div>
     <div class="chk"><label><input type="checkbox" id="showEnds" checked> 「▼潜航開始／▲浮上」ラベルを表示</label></div>
@@ -131,6 +135,7 @@
     <button id="threedClose" style="margin-left:auto">閉じる ✕</button>
   </div>
   <div id="threedBody"></div>
+  <div id="tdLegend"><span id="tdLegMin"></span><div id="tdLegBar"></div><span id="tdLegMax"></span><span id="tdLegName"></span></div>
   <div id="threedInfo"></div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -299,6 +304,7 @@ function render(){
       diveSeq++;
       if(hiddenDives.has(bag.name+"#"+dive.idx)) return;   // manually hidden
       if(hideBadFit && dive.wp_fit_m!=null && dive.wp_fit_m > fitThr) return;   // not a lawnmower run
+      if(!document.getElementById("showNoSite").checked && diveSiteDist(dive) > parseFloat(document.getElementById("siteThr").value)) return;   // no survey site nearby
       shownDives.push({seq: diveSeq, bag: bag.name, idx: dive.idx});
       const chipMk = (ll,bg,txt,dotBg,yPct)=>L.marker(ll,{zIndexOffset:2000,icon:L.divIcon({className:"",
         html:`<div class="se-wrap"><div class="se-chip" style="background:${bg};transform:translate(-50%,${yPct}%)">${txt}</div><div class="se-dot" style="background:${dotBg}"></div></div>`,
@@ -440,6 +446,14 @@ function nearestSiteName(lat, lon){
   }
   return best ? best.name : null;
 }
+function diveSiteDist(dive){
+  if(!window.KMZ_DATA) return 0;
+  const a = dive.clas_start || dive.gps_start || dive.clas_end || dive.gps_end;
+  if(!a) return Infinity;
+  let bd = Infinity;
+  for(const p of window.KMZ_DATA.points) bd = Math.min(bd, map.distance([a.lat,a.lon],[p.lat,p.lon]));
+  return bd;
+}
 function bagSiteName(bag){
   const votes = {};
   for(const dv of bag.dives){
@@ -576,7 +590,7 @@ function fitAll(){
   if(pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
 }
 document.getElementById("fit").addEventListener("click",fitAll);
-["showEnds","showAnchor","useGps","showFix","showFloat","showGpsPts","showAnchors","showWp","wpFlipY","showClasEnds","winSec","hideBadFit","fitThr"].forEach(id=>document.getElementById(id).addEventListener("change",render));
+["showEnds","showAnchor","useGps","showFix","showFloat","showGpsPts","showAnchors","showWp","wpFlipY","showClasEnds","winSec","hideBadFit","fitThr","showNoSite","siteThr"].forEach(id=>document.getElementById(id).addEventListener("change",render));
 document.getElementById("file").addEventListener("change",e=>{
   const f=e.target.files[0]; if(!f) return;
   f.text().then(txt=>{ try{ loadData(JSON.parse(txt), f.name); }catch(err){ alert("読み込み失敗: "+err.message); } });
@@ -640,6 +654,7 @@ document.getElementById("showAllBtn").addEventListener("click",()=>{
   DATA.bags.forEach(bag=>{ state[bag.name].visible = true; });
   hiddenDives.clear();
   document.getElementById("hideBadFit").checked = false;
+  document.getElementById("showNoSite").checked = true;
   buildControls(); render();
 });
 document.getElementById("alignAll").addEventListener("change",e=>{
@@ -702,6 +717,15 @@ function tdSprite(text, color){
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthTest: false }));
   sp.scale.set(6, 1.9, 1);
   return sp;
+}
+function tdLegendUpdate(){
+  const mode = document.getElementById("tdColor").value;
+  const bar = document.getElementById("tdLegBar");
+  const mn = document.getElementById("tdLegMin"), mx = document.getElementById("tdLegMax"), nm = document.getElementById("tdLegName");
+  if(!bar) return;
+  if(mode==="alt"){ bar.style.background = "linear-gradient(90deg,#ffa040,#35e0ff)"; mn.textContent = "0 m（海底）"; mx.textContent = `${(td.amax||0).toFixed(0)} m`; nm.textContent = "色＝高度"; }
+  else if(mode==="depth"){ bar.style.background = "linear-gradient(90deg,#35e0ff,#8a4bff)"; mn.textContent = "0 m（水面）"; mx.textContent = `${(td.zmax||0).toFixed(0)} m`; nm.textContent = "色＝深度"; }
+  else { bar.style.background = "linear-gradient(90deg,#2bff6a,#ff5040)"; mn.textContent = "開始"; mx.textContent = "終了"; nm.textContent = "色＝経過時間"; }
 }
 function tdColors(){
   if(!td.geo) return;
@@ -804,6 +828,7 @@ function open3D(bag, dive){
   controls.enableDamping = true;
   controls.autoRotate = document.getElementById("tdSpin").checked;
   td.controls = controls;
+  tdLegendUpdate();
   const loop = ()=>{ td.raf = requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); };
   loop();
 }
@@ -817,7 +842,7 @@ function close3D(){
 document.getElementById("threedClose").addEventListener("click", close3D);
 document.getElementById("tdWp").addEventListener("change", e=>{ if(td.wpGroup) td.wpGroup.visible = e.target.checked; });
 document.getElementById("tdSpin").addEventListener("change", e=>{ if(td.controls) td.controls.autoRotate = e.target.checked; });
-document.getElementById("tdColor").addEventListener("change", tdColors);
+document.getElementById("tdColor").addEventListener("change", ()=>{ tdColors(); tdLegendUpdate(); });
 document.getElementById("tdVert").addEventListener("change", ()=>{ if(td.bag && td.dive) open3D(td.bag, td.dive); });
 document.addEventListener("keydown", e=>{ if(e.key==="Escape") close3D(); });
 window.addEventListener("resize", ()=>{
