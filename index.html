@@ -402,16 +402,15 @@ function updateViewPanel(){
   if(!DATA) return;
   const b = map.getBounds();
   const inView = placedTracks.filter(t => t.pts.some(p => b.contains(p)));
-  const shownSet = new Set(lastShown.map(s=>s.bag+"#"+s.idx));
   const viewSet = new Set(inView.map(s=>s.bag+"#"+s.idx));
+  // Panel mirrors the map: dives not in the current viewport are HIDDEN, not dimmed.
   document.querySelectorAll(".dive[data-bag]").forEach(el=>{
     const k = el.dataset.bag+"#"+el.dataset.idx;
-    el.classList.toggle("dive-off", !shownSet.has(k));
-    el.classList.toggle("dive-outview", shownSet.has(k) && !viewSet.has(k));
+    el.style.display = viewSet.has(k) ? "" : "none";
   });
   document.querySelectorAll("#bags .bag").forEach((div,bi)=>{
     const bag = DATA.bags[bi]; if(!bag) return;
-    div.classList.toggle("bag-outview", bag.dives.length>0 && !inView.some(t=>t.bag===bag.name));
+    div.style.display = (bag.dives.length===0 || inView.some(t=>t.bag===bag.name)) ? "" : "none";
   });
   const sum = document.getElementById("shownSummary");
   if(sum){
