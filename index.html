@@ -132,6 +132,8 @@
     <label><input type="checkbox" id="tdSpin"> 自動回転</label>
     <label>縦軸 <select id="tdVert"><option value="depth">深度</option><option value="alt">高度（海底から）</option></select></label>
     <label>色 <select id="tdColor"><option value="depth">深度</option><option value="alt">高度</option><option value="time">経過時間</option></select></label>
+    <label>色の範囲 <select id="tdScale"><option value="auto" selected>自動（最小〜最大）</option><option value="full">全体（0〜最大）</option><option value="manual">手動</option></select></label>
+    <label>下限 <input type="number" id="tdCmin" step="0.1" style="width:60px"> 上限 <input type="number" id="tdCmax" step="0.1" style="width:60px"> m</label>
     <span class="small">ドラッグ=回転 / ホイール=ズーム / 右ドラッグ=移動</span>
     <button id="threedClose" style="margin-left:auto">閉じる ✕</button>
   </div>
@@ -721,13 +723,27 @@ function tdSprite(text, color){
   sp.scale.set(6, 1.9, 1);
   return sp;
 }
+function tdScaleRange(mode){
+  const vals = td.pts.map(p=> mode==="alt" ? (p.alt||0) : (p.z||0));
+  const sc = document.getElementById("tdScale").value;
+  let lo, hi;
+  if(sc==="manual"){
+    lo = parseFloat(document.getElementById("tdCmin").value);
+    hi = parseFloat(document.getElementById("tdCmax").value);
+    if(!isFinite(lo) || !isFinite(hi) || hi<=lo){ lo = Math.min(...vals); hi = Math.max(...vals); }
+  } else if(sc==="full"){ lo = 0; hi = mode==="alt" ? Math.max(...vals) : td.zmax; }
+  else { lo = Math.min(...vals); hi = Math.max(...vals); }
+  if(hi<=lo) hi = lo + 1;
+  td.scaleLo = lo; td.scaleHi = hi;
+  return [lo, hi];
+}
 function tdLegendUpdate(){
   const mode = document.getElementById("tdColor").value;
   const bar = document.getElementById("tdLegBar");
   const mn = document.getElementById("tdLegMin"), mx = document.getElementById("tdLegMax"), nm = document.getElementById("tdLegName");
   if(!bar) return;
-  if(mode==="alt"){ bar.style.background = "linear-gradient(90deg,#ffa040,#35e0ff)"; mn.textContent = "0 m（海底）"; mx.textContent = `${(td.amax||0).toFixed(0)} m`; nm.textContent = "色＝高度"; }
-  else if(mode==="depth"){ bar.style.background = "linear-gradient(90deg,#35e0ff,#8a4bff)"; mn.textContent = "0 m（水面）"; mx.textContent = `${(td.zmax||0).toFixed(0)} m`; nm.textContent = "色＝深度"; }
+  if(mode==="alt"){ bar.style.background = "linear-gradient(90deg,#ffa040,#35e0ff)"; mn.textContent = `${(td.scaleLo||0).toFixed(1)} m`; mx.textContent = `${(td.scaleHi||0).toFixed(1)} m`; nm.textContent = "色＝高度"; }
+  else if(mode==="depth"){ bar.style.background = "linear-gradient(90deg,#35e0ff,#8a4bff)"; mn.textContent = `${(td.scaleLo||0).toFixed(1)} m`; mx.textContent = `${(td.scaleHi||0).toFixed(1)} m`; nm.textContent = "色＝深度"; }
   else { bar.style.background = "linear-gradient(90deg,#2bff6a,#ff5040)"; mn.textContent = "開始"; mx.textContent = "終了"; nm.textContent = "色＝経過時間"; }
 }
 function tdColors(){
@@ -736,10 +752,11 @@ function tdColors(){
   const cols = td.geo.attributes.color;
   const cA = new THREE.Color(0x35e0ff), cB = new THREE.Color(0x8a4bff), cC = new THREE.Color(0x2bff6a), cD = new THREE.Color(0xff5040);
   const cE = new THREE.Color(0xffa040), cF = new THREE.Color(0x35e0ff);
+  const range = (mode==="alt" || mode==="depth") ? tdScaleRange(mode) : null;
   td.pts.forEach((p,i)=>{
     let col;
-    if(mode==="alt"){ const f = Math.min(1, Math.max(0, (p.alt||0)/(td.amax||1))); col = cE.clone().lerp(cF, f); }
-    else if(mode==="depth"){ const f = Math.min(1, Math.max(0, (p.z||0)/td.zmax)); col = cA.clone().lerp(cB, f); }
+    if(mode==="alt"){ const f = Math.min(1, Math.max(0, ((p.alt||0)-range[0])/(range[1]-range[0]))); col = cE.clone().lerp(cF, f); }
+    else if(mode==="depth"){ const f = Math.min(1, Math.max(0, ((p.z||0)-range[0])/(range[1]-range[0]))); col = cA.clone().lerp(cB, f); }
     else { const f = td.pts.length>1 ? i/(td.pts.length-1) : 0; col = cC.clone().lerp(cD, f); }
     cols.setXYZ(i, col.r, col.g, col.b);
   });
@@ -821,10 +838,18 @@ function open3D(bag, dive){
   wpGroup.visible = document.getElementById("tdWp").checked;
   scene.add(wpGroup);
   const alts = td.pts.map(p=>p.alt).filter(a=>a!=null);
+  const lockPts = dive.points.filter(p=>(p.alt||0)>0 && (p.alt||0)<=2);
+  let statTxt = "";
+  if(lockPts.length>10){
+    const st = arr => { const m = arr.reduce((a,b)=>a+b,0)/arr.length; const sd = Math.sqrt(arr.reduce((a,b)=>a+(b-m)*(b-m),0)/arr.length); return { m, sd, mn: Math.min(...arr), mx: Math.max(...arr) }; };
+    const sa = st(lockPts.map(p=>p.alt)), sz = st(lockPts.map(p=>p.z||0));
+    statTxt = ` ／ 海底付近（高度2 m以下）のブレ： 高度 平均 ${sa.m.toFixed(2)} m σ ${sa.sd.toFixed(2)} （${sa.mn.toFixed(2)}〜${sa.mx.toFixed(2)} m）、深度 平均 ${sz.m.toFixed(2)} m σ ${sz.sd.toFixed(2)} （${sz.mn.toFixed(2)}〜${sz.mx.toFixed(2)} m）`;
+  }
   document.getElementById("threedInfo").textContent =
     (vertMode==="alt" ? "縦軸=高度： グリッドが海底で、航跡は海底からの高さで表示（ウェイポイントは海底面に配置、高度0=未測位の点は除外）。高度の出所は Nucleus の altitude（auv_status.alt と同一値）。" : "縦軸=深度： グリッドが水面で、航跡は下向きが深度。")
     + ` 深度 0〜${td.zmax.toFixed(1)} m` + (alts.length?` ／ 高度(海底から) ${Math.min(...alts).toFixed(1)}〜${Math.max(...alts).toFixed(1)} m`:"")
-    + ` ／ 航跡点 ${td.pts.length} ／ 所要 ${Math.round(dive.dur_sec)} 秒 ／ ローカル座標のまま表示（x: 前後, y: 左右）`;
+    + ` ／ 航跡点 ${td.pts.length} ／ 所要 ${Math.round(dive.dur_sec)} 秒 ／ ローカル座標のまま表示（x: 前後, y: 左右）`
+    + statTxt;
   camera.position.set(extent*0.75, (vmin+vmax)/2 + extent*0.65, extent*0.95);
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.target.set(0, (vmin+vmax)/2, 0);
@@ -846,6 +871,7 @@ document.getElementById("threedClose").addEventListener("click", close3D);
 document.getElementById("tdWp").addEventListener("change", e=>{ if(td.wpGroup) td.wpGroup.visible = e.target.checked; });
 document.getElementById("tdSpin").addEventListener("change", e=>{ if(td.controls) td.controls.autoRotate = e.target.checked; });
 document.getElementById("tdColor").addEventListener("change", ()=>{ tdColors(); tdLegendUpdate(); });
+["tdScale","tdCmin","tdCmax"].forEach(id=>document.getElementById(id).addEventListener("change", ()=>{ tdColors(); tdLegendUpdate(); }));
 document.getElementById("tdVert").addEventListener("change", ()=>{ if(td.bag && td.dive) open3D(td.bag, td.dive); });
 document.addEventListener("keydown", e=>{ if(e.key==="Escape") close3D(); });
 window.addEventListener("resize", ()=>{
