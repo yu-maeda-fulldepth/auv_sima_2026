@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AUVログ マップ — CLAS × 航跡 合わせ込み</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  html,body{height:100%;margin:0;font-family:system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;background:#0b1220;color:#e5edf7}
+  #app{display:flex;height:100%}
+  #map{flex:1;height:100%}
+  #side{width:360px;max-width:92vw;overflow-y:auto;padding:12px 14px;background:#101a2e;box-shadow:-2px 0 12px rgba(0,0,0,.4)}
+  h1{font-size:16px;margin:2px 0 8px}
+  h2{font-size:13px;margin:14px 0 6px;color:#8fd3ff;border-bottom:1px solid #22385e;padding-bottom:3px}
+  .bag{border:1px solid #22385e;border-radius:8px;padding:8px;margin:8px 0;background:#0d1626}
+  .bag .hd{display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;word-break:break-all}
+  .swatch{width:12px;height:12px;border-radius:3px;flex:none}
+  .row{display:flex;align-items:center;gap:6px;margin:5px 0;font-size:12px}
+  .row label{width:86px;flex:none;color:#aebfd8}
+  .row input[type=range]{flex:1}
+  .row input[type=number]{width:64px;background:#0b1220;color:#e5edf7;border:1px solid #2b4a77;border-radius:4px;padding:2px 4px}
+  .chk{font-size:12px;margin:3px 0}
+  .dive{font-size:11.5px;color:#c6d5ea;border-top:1px dashed #22385e;padding:5px 0 2px;line-height:1.55}
+  .dive b{color:#8fd3ff}
+  button{background:#175a94;color:#fff;border:0;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px}
+  button.sub{background:#22385e}
+  button:hover{filter:brightness(1.2)}
+  .note{font-size:11.5px;color:#ffb86b}
+  #coord{position:absolute;z-index:500;left:10px;bottom:10px;background:rgba(10,18,34,.85);padding:4px 8px;border-radius:6px;font-size:12px}
+  .small{font-size:11px;color:#93a7c4}
+  .anchor-diamond{width:14px;height:14px;transform:rotate(45deg);border:2px solid #fff;border-radius:2px;box-shadow:0 0 6px rgba(0,0,0,.7)}
+  .se-wrap{position:relative;width:0;height:0}
+  .se-chip{position:absolute;left:0;top:0;transform:translate(-50%,-190%);font-weight:700;font-size:11.5px;color:#fff;padding:2px 8px;border-radius:10px;border:2px solid #fff;box-shadow:0 1px 7px rgba(0,0,0,.85);white-space:nowrap}
+  .se-dot{position:absolute;left:0;top:0;width:9px;height:9px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid #fff;box-shadow:0 0 5px rgba(0,0,0,.8)}
+  .wp-wrap{position:relative;width:0;height:0}
+  .wp-dot{position:absolute;left:0;top:0;width:17px;height:17px;transform:translate(-50%,-50%);border-radius:50%;background:#fff;color:#111;border:2px solid #111;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 0 5px rgba(0,0,0,.7)}
+  .dist-label{background:rgba(10,18,34,.88);color:#fff;border:1px solid #40c4ff;border-radius:4px;padding:1px 5px;font-size:11px;white-space:nowrap}
+  .kmz-label{background:rgba(255,255,255,.88);color:#222;border:1px solid #666;border-radius:3px;padding:0 4px;font-size:10.5px;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+  .kmz-label::before{display:none}
+  #measureBtn.on{background:#b8860b}
+  select{background:#0b1220;color:#e5edf7;border:1px solid #2b4a77;border-radius:4px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="map"></div>
+  <div id="side">
+    <h1>🚤 AUVログ マップ</h1>
+    <div class="small">CLAS（絶対位置）に、航跡（相対 xyz）を合わせ込みます。<br>
+    既定：<b>潜航開始点＝CLAS開始点に一致</b>、<b>潜航終了点は方位だけ一致</b>（距離は伸縮しない）。ずれたら下のスライダーで <b>位置・回転・比率</b> を手動調整できます。</div>
+
+    <h2>データ</h2>
+    <div class="row"><input type="file" id="file" accept=".json" style="flex:1"></div>
+    <div class="small">通常は extract_auv_log.py が作った data.js を自動で読みます。別の data.json を開く場合はここから。</div>
+    <div id="status" class="small" style="margin-top:6px"></div>
+
+    <h2>表示</h2>
+    <div class="row"><label style="width:150px">測位点の表示範囲</label>
+      <select id="winSec"><option value="30">前後30秒</option><option value="60">前後60秒</option><option value="120" selected>前後120秒</option><option value="300">前後300秒</option></select>
+      <span class="small">潜航中・潜航直前・浮上直後のみ</span></div>
+    <div class="chk"><label><input type="checkbox" id="showFix" checked> <span style="color:#00e676">●</span> CLAS FIX（status=4）を表示</label></div>
+    <div class="chk"><label><input type="checkbox" id="showFloat" checked> <span style="color:#ffb300">●</span> CLAS FLOAT（status=5）を表示</label></div>
+    <div class="chk"><label><input type="checkbox" id="showGpsPts" checked> <span style="color:#b0bec5">●</span> 通常GPS（status=1など、CLAS未測位）を表示</label></div>
+    <div class="chk"><label><input type="checkbox" id="showAnchors" checked> ◆ アンカー（採用したCLAS中央値）を強調表示</label></div>
+    <div class="chk"><label><input type="checkbox" id="showWp" checked> ウェイポイント（白丸＋番号、計画経路）を表示</label></div>
+    <div class="chk"><label><input type="checkbox" id="wpFlipY" checked> ウェイポイントのY符号を反転（航跡座標系に合わせる）</label></div>
+    <div class="chk"><label><input type="checkbox" id="showClasEnds" checked> CLAS潜航開始／浮上ポイント（青ラベル。CLASが無い・遅い浮上はGPS単独測位で代替）を表示</label></div>
+    <div class="chk"><label><input type="checkbox" id="showKmz" checked> 調査地点（KMZ）を表示</label></div>
+    <div class="chk"><label><input type="checkbox" id="hideBadFit"> 芝刈り航行できていない潜航を隠す</label>
+      <span class="small">（経路フィット &gt; <select id="fitThr"><option value="1">1</option><option value="2" selected>2</option><option value="5">5</option></select> m の潜航。個別の表示ON/OFFは各ログの潜航欄でも可能）</span></div>
+    <div class="chk"><label><input type="checkbox" id="showEnds" checked> 「▼潜航開始／▲浮上」ラベルを表示</label></div>
+    <div class="chk"><label><input type="checkbox" id="showAnchor" checked> ドラッグ用アンカー（選択中ログの開始点）</label></div>
+    <div class="chk"><label><input type="checkbox" id="useGps" checked> CLASが無い潜航は通常GPS（status≥1）で仮置き（破線）</label></div>
+
+    <h2>距離計測</h2>
+    <div class="row">
+      <button id="measureBtn">📏 計測モード OFF</button>
+      <button id="measureClear" class="sub">クリア</button>
+    </div>
+    <div id="measureInfo" class="small">OFFの間は通常操作。ONにして地図をクリックすると点が打たれ、区間距離と合計が出ます（点はドラッグ可、ダブルクリック/Escで終了）。</div>
+
+    <h2>凡例</h2>
+    <div class="small" style="line-height:1.7">
+      <span style="color:#00e676">●</span> CLAS FIX（高精度・固定解）　<span style="color:#ffb300">●</span> CLAS FLOAT（浮動解）　<span style="color:#b0bec5">●</span> 通常GPS（CLAS未測位）<br>
+      <span style="color:#00e676">◆</span> 潜航開始アンカー　<span style="color:#ff5252">◆</span> 浮上終了アンカー（どちらも直近CLAS点の中央値。白リングは中央値に使った点）<br>
+      実線＝CLASアンカーで配置した航跡／破線＝通常GPSで仮置きした航跡<br>
+      緑ラベル「▼潜航開始 N」／赤ラベル「▲浮上 N」＝補正後の開始・浮上ポイント（Nは潜航の通し番号。クリックで時刻と座標）<br>
+      白丸＋数字＝ウェイポイント（ログ内の計画点。白破線が計画経路。航跡と同じ補正で配置。マーカー座標系は航跡とY符号が逆なので反転して合わせている）<br>
+      青ラベル「CLAS開始 N／CLAS浮上 N」＝CLAS実測による潜航開始・浮上ポイント（中央値）。緑／赤ラベルは補正後の航跡側の開始・終了で、青と緑が一致するのが開始アンカーで合わせた潜航<br>
+      アイコン＋地名ラベル＝調査地点（アップロードされたKMZ「調査地点一覧」より。クリックで水深などの説明）
+    </div>
+
+    <h2>ログ別 調整</h2>
+    <div id="bags"></div>
+
+    <h2>書き出し</h2>
+    <div class="row">
+      <button id="expGeo">補正後航跡 GeoJSON</button>
+      <button id="expCsv" class="sub">補正後航跡 CSV</button>
+    </div>
+    <div class="row">
+      <button id="expParam" class="sub">調整パラメータ JSON</button>
+      <button id="fit" class="sub">全体にフィット</button>
+    </div>
+    <div class="small" style="margin-top:8px">軸の前提：既定は x=東, y=北（ENU）。実機が NED（x=北, y=東）なら各ログの「x↔y 入替」をON。z は表示用（ポップアップ）に保持しています。</div>
+  </div>
+</div>
+<div id="coord">—</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="data.js" onerror="void 0"></script>
+<script src="kmz_data.js" onerror="void 0"></script>
+<script>
+"use strict";
+const COLORS = ["#ff5252","#40c4ff","#69f0ae","#ffd740","#e040fb","#ff9e80","#64ffda","#b388ff","#ff8a80","#82b1ff"];
+const R_EARTH = 6371000;
+const rad = d => d*Math.PI/180, deg = r => r*180/Math.PI;
+const wrap = d => ((d+180)%360+360)%360-180;
+function bearing(lat1,lon1,lat2,lon2){
+  const p1=rad(lat1),p2=rad(lat2),dl=rad(lon2-lon1);
+  const y=Math.sin(dl)*Math.cos(p2), x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
+  return (deg(Math.atan2(y,x))+360)%360;
+}
+function destPoint(lat,lon,eastM,northM){
+  const dlat = deg(northM/R_EARTH);
+  const dlon = deg(eastM/(R_EARTH*Math.cos(rad(lat))));
+  return [lat+dlat, lon+dlon];
+}
+
+const map = L.map("map",{renderer:L.canvas(),maxZoom:23,zoomSnap:0.25,zoomDelta:0.5,wheelPxPerZoomLevel:90}).setView([35.0,139.0],10);
+const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:23,maxNativeZoom:19,attribution:"© OpenStreetMap contributors"});
+const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxZoom:23,maxNativeZoom:18,attribution:"© Esri, Maxar, Earthstar Geographics"});
+sat.addTo(map);
+L.control.layers({"衛星 (Esri)":sat,"地図 (OSM)":osm}).addTo(map);
+L.control.scale({imperial:false}).addTo(map);
+map.on("mousemove",e=>{document.getElementById("coord").textContent =
+  e.latlng.lat.toFixed(6)+", "+e.latlng.lng.toFixed(6);});
+
+let DATA=null;
+const state = {};   // bagName -> params
+const hiddenDives = new Set();   // "bagName#diveIdx" manually hidden dives
+const layers = {};  // bagName -> L.layerGroup
+let anchorMarker=null, anchorBag=null;
+
+function defaultParams(){
+  return {visible:true, offsetE:0, offsetN:0, rot:0, scale:100, rotMode:"nuc", swap:false, invX:false, invY:false};
+}
+function toENU(p, prm){
+  let a = prm.swap ? p[1] : p[0];
+  let b = prm.swap ? p[0] : p[1];
+  if(prm.invX) a=-a; if(prm.invY) b=-b;
+  return [a,b]; // [east, north]
+}
+function pickAnchors(dive, useGps){
+  // Freshness rule: a CLAS anchor whose cluster is >120 s away from the dive
+  // boundary is stale (it may be another dive's cluster) -> prefer the fresh
+  // standalone-GPS anchor (gap ~0-1 s) when available.
+  const FRESH = 120;
+  const pick1 = (c, g)=> (c && c.gap_sec <= FRESH) ? c : (useGps && g ? g : c);
+  let s = pick1(dive.clas_start, dive.gps_start);
+  let e = pick1(dive.clas_end, dive.gps_end);
+  if(!s && !e){ s = dive.clas_start || dive.gps_start; e = dive.clas_end || dive.gps_end; }
+  if(!s && !e) return null;
+  const sIsClas = !!s && s === dive.clas_start, eIsClas = !!e && e === dive.clas_end;
+  const src = (sIsClas || !s) && (eIsClas || !e) && (s || e) && (sIsClas || eIsClas) ? "CLAS" : "GPS含む";
+  return {s, e, src, sIsClas, eIsClas};
+}
+function diveTransform(bag, dive, prm, useGps){
+  // returns {fn, src, anchor, atStart} or null if no anchor at all
+  const pa = pickAnchors(dive, useGps);
+  if(!pa) return null;
+  const anchor = pa.s || pa.e, atStart = !!pa.s;
+  const aENU = toENU(atStart ? dive.track_start : dive.track_end, prm);
+  const sENU = toENU(dive.track_start, prm), eENU = toENU(dive.track_end, prm);
+  let rotAuto = 0;
+  // Primary: Nucleus AHRS heading minus status yaw (median over the dive's
+  // mission segment) -- the localiser's yaw zero shifts per dive, and this
+  // difference recovers the local frame's rotation without needing an end
+  // anchor. Fallback: CLAS start->end bearing, but only when both anchors
+  // are fresh CLAS fixes at least 10 m apart (else the bearing is noise).
+  if(prm.rotMode === "nuc" && dive.nuc_diff_deg != null){
+    rotAuto = dive.nuc_diff_deg;
+  } else if(prm.rotMode !== "none" && pa.s && pa.e && pa.sIsClas && pa.eIsClas
+     && pa.s.gap_sec <= 120 && pa.e.gap_sec <= 120
+     && map.distance([pa.s.lat,pa.s.lon],[pa.e.lat,pa.e.lon]) >= 10){
+    const dx = eENU[0]-sENU[0], dy = eENU[1]-sENU[1];
+    if(dx||dy){
+      const tb = (deg(Math.atan2(dx,dy))+360)%360;
+      rotAuto = wrap(bearing(pa.s.lat,pa.s.lon,pa.e.lat,pa.e.lon) - tb);
+    }
+  }
+  const th = rad(rotAuto + prm.rot), sc = prm.scale/100;
+  const cos=Math.cos(th), sin=Math.sin(th);
+  const fn = (x,y)=>{
+    const enu = toENU([x,y],prm);
+    let rx = (enu[0]-aENU[0])*sc, ry = (enu[1]-aENU[1])*sc;
+    const ex = rx*cos + ry*sin;      // rotate CW by th (bearing convention)
+    const ny = -rx*sin + ry*cos;
+    return destPoint(anchor.lat, anchor.lon, ex + prm.offsetE, ny + prm.offsetN);
+  };
+  return {fn, src: pa.src, anchor, atStart, rotAuto};
+}
+
+function render(){
+  for(const k in layers){ map.removeLayer(layers[k]); delete layers[k]; }
+  if(anchorMarker){ map.removeLayer(anchorMarker); anchorMarker=null; }
+  if(!DATA) return;
+  const showEnds = document.getElementById("showEnds").checked;
+  const showAnchor = document.getElementById("showAnchor").checked;
+  const showFix = document.getElementById("showFix").checked;
+  const showFloat = document.getElementById("showFloat").checked;
+  const showGpsPts = document.getElementById("showGpsPts").checked;
+  const showAnchors = document.getElementById("showAnchors").checked;
+  const showWp = document.getElementById("showWp").checked;
+  const wpFlipY = document.getElementById("wpFlipY").checked;
+  const showClasEnds = document.getElementById("showClasEnds").checked;
+  const hideBadFit = document.getElementById("hideBadFit").checked;
+  const fitThr = parseFloat(document.getElementById("fitThr").value);
+  const W = parseFloat(document.getElementById("winSec").value);
+  let diveSeq = 0;
+  DATA.bags.forEach((bag,bi)=>{
+    const prm = state[bag.name]; if(!prm.visible) return;
+    const color = COLORS[bi%COLORS.length];
+    const g = L.layerGroup(); layers[bag.name]=g;
+    // Positioning points: ONLY within [dive start - W, dive end + W]
+    const inWindow = t => bag.dives.some(dv => t >= dv.t0 - W && t <= dv.t1 + W);
+    const ptPopup = (p,kind)=>`${kind}<br>${new Date(p.t*1000).toLocaleString("ja-JP")}<br>status=${p.status}<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`;
+    if(showFix || showFloat){
+      bag.clas_all.filter(p=>inWindow(p.t)).forEach(p=>{
+        if(p.status===4 && showFix)
+          L.circleMarker([p.lat,p.lon],{radius:4,color:"#003d1a",weight:1,fillColor:"#00e676",fillOpacity:.95})
+           .bindPopup(ptPopup(p,"CLAS FIX（status=4）")).addTo(g);
+        else if(p.status===5 && showFloat)
+          L.circleMarker([p.lat,p.lon],{radius:4,color:"#4d2f00",weight:1,fillColor:"#ffb300",fillOpacity:.95})
+           .bindPopup(ptPopup(p,"CLAS FLOAT（status=5）")).addTo(g);
+      });
+    }
+    if(showGpsPts){
+      (bag.gps_all||[]).filter(p=>inWindow(p.t) && p.status!==4 && p.status!==5).forEach(p=>{
+        L.circleMarker([p.lat,p.lon],{radius:2.5,color:"none",fillColor:"#b0bec5",fillOpacity:.5})
+         .bindPopup(ptPopup(p,"通常GPS（CLAS未測位）")).addTo(g);
+      });
+    }
+    const useGps = document.getElementById("useGps").checked;
+    bag.dives.forEach(dive=>{
+      const tr = diveTransform(bag,dive,prm,useGps);
+      if(!tr) return;   // no anchor at all: cannot place
+      const fn = tr.fn;
+      diveSeq++;
+      if(hiddenDives.has(bag.name+"#"+dive.idx)) return;   // manually hidden
+      if(hideBadFit && dive.wp_fit_m!=null && dive.wp_fit_m > fitThr) return;   // not a lawnmower run
+      const chipMk = (ll,bg,txt,dotBg,yPct)=>L.marker(ll,{zIndexOffset:2000,icon:L.divIcon({className:"",
+        html:`<div class="se-wrap"><div class="se-chip" style="background:${bg};transform:translate(-50%,${yPct}%)">${txt}</div><div class="se-dot" style="background:${dotBg}"></div></div>`,
+        iconSize:[0,0],iconAnchor:[0,0]})});
+      if(showAnchors){
+        const a = tr.anchor;
+        const colA = tr.atStart ? "#00e676" : "#ff5252";
+        L.marker([a.lat,a.lon],{icon:L.divIcon({className:"",html:`<div class="anchor-diamond" style="background:${tr.src==="GPS"?"#9e9e9e":colA}"></div>`,iconSize:[18,18],iconAnchor:[9,9]})})
+         .bindPopup(`${tr.src}アンカー（${tr.atStart?"潜航開始":"浮上終了"}・採用した中央値）<br>${a.lat.toFixed(6)}, ${a.lon.toFixed(6)}<br>使用点数 n=${a.n} / 潜航境界からのgap ${a.gap_sec}s`)
+         .addTo(g);
+        const edge = tr.atStart ? dive.t0 - (a.gap_sec||0) : dive.t1 + (a.gap_sec||0);
+        const lo = tr.atStart ? edge-22 : edge-2, hi = tr.atStart ? edge+2 : edge+22;
+        [...bag.clas_all, ...(bag.gps_all||[])].filter(p=>p.t>=lo&&p.t<=hi).forEach(p=>{
+          L.circleMarker([p.lat,p.lon],{radius:7,color:"#ffffff",weight:2,fillOpacity:0}).addTo(g);
+        });
+      }
+      if(showClasEnds){
+        if(dive.clas_start)
+          chipMk([dive.clas_start.lat,dive.clas_start.lon],"#0288d1",`CLAS開始 ${diveSeq}`,"#29b6f6",-330)
+           .bindPopup(`<b>CLAS潜航開始ポイント</b>（dive ${diveSeq} / 実測CLAS点の中央値）<br>${dive.clas_start.lat.toFixed(6)}, ${dive.clas_start.lon.toFixed(6)}<br>使用点数 n=${dive.clas_start.n} / 潜航開始からのgap ${dive.clas_start.gap_sec}s`).addTo(g);
+        else if(dive.gps_start)
+          chipMk([dive.gps_start.lat,dive.gps_start.lon],"#607d8b",`GPS開始 ${diveSeq}`,"#b0bec5",-330)
+           .bindPopup(`<b>GPS潜航開始ポイント</b>（dive ${diveSeq} / CLASなし・通常GPS中央値）<br>${dive.gps_start.lat.toFixed(6)}, ${dive.gps_start.lon.toFixed(6)}<br>使用点数 n=${dive.gps_start.n}`).addTo(g);
+        else {
+          const sp = fn(dive.track_start[0],dive.track_start[1]);
+          chipMk(sp,"#78909c",`開始（測位なし） ${diveSeq}`,"#cfd8dc",-330)
+           .bindPopup(`<b>潜航開始ポイント（測位なし）</b>（dive ${diveSeq}）<br>この潜航の開始前にはCLAS/GPSの測位点がログに無いため、補正後航跡の開始位置を表示しています`).addTo(g);
+        }
+        // Surfacing: CLAS counts only if it locked within 120 s; otherwise fall back to standalone GPS.
+        const ce = dive.clas_end, ge = dive.gps_end, CLAS_GAP_OK = 120;
+        if(ce && ce.gap_sec <= CLAS_GAP_OK)
+          chipMk([ce.lat,ce.lon],"#01579b",`CLAS浮上 ${diveSeq}`,"#03a9f4",-330)
+           .bindPopup(`<b>CLAS浮上ポイント</b>（dive ${diveSeq} / 実測CLAS点の中央値）<br>${ce.lat.toFixed(6)}, ${ce.lon.toFixed(6)}<br>使用点数 n=${ce.n} / 浮上からのgap ${ce.gap_sec}s`).addTo(g);
+        else if(ge)
+          chipMk([ge.lat,ge.lon],"#546e7a",`GPS浮上（単独測位） ${diveSeq}`,"#90a4ae",-330)
+           .bindPopup(`<b>GPS浮上ポイント（単独測位）</b>（dive ${diveSeq}）<br>${ge.lat.toFixed(6)}, ${ge.lon.toFixed(6)}<br>使用点数 n=${ge.n} / 浮上からのgap ${ge.gap_sec}s<br>${ce ? `CLASは浮上から ${ce.gap_sec} 秒後まで測位できなかったためGPSを表示` : "CLAS測位なし・通常GPSの中央値"}`).addTo(g);
+        else if(ce)
+          chipMk([ce.lat,ce.lon],"#01579b",`CLAS浮上（遅延${ce.gap_sec}s） ${diveSeq}`,"#03a9f4",-330)
+           .bindPopup(`<b>CLAS浮上ポイント（遅延）</b>（dive ${diveSeq} / 実測CLAS点の中央値）<br>${ce.lat.toFixed(6)}, ${ce.lon.toFixed(6)}<br>浮上から ${ce.gap_sec} 秒後の測位のため、浮上位置そのものではない可能性があります`).addTo(g);
+        else {
+          const ep = fn(dive.track_end[0],dive.track_end[1]);
+          chipMk(ep,"#78909c",`浮上（測位なし） ${diveSeq}`,"#cfd8dc",-330)
+           .bindPopup(`<b>浮上ポイント（測位なし）</b>（dive ${diveSeq}）<br>浮上後にCLAS/GPSの測位点がログに無い（記録が先に終わっている）ため、補正後航跡の終了位置を表示しています`).addTo(g);
+        }
+      }
+      const latlngs = dive.points.filter(p=>p.x!=null&&p.y!=null).map(p=>fn(p.x,p.y));
+      if(latlngs.length>1){
+        L.polyline(latlngs,{color,weight:2.5,opacity:tr.src==="GPS"?0.75:0.95,dashArray:tr.src==="GPS"?"7 6":null})
+         .bindPopup(`<b>${bag.name}</b> dive#${dive.idx}（${tr.src}アンカー${tr.atStart?"・開始":"・終了"}）<br>${new Date(dive.t0*1000).toLocaleString("ja-JP")} 〜 ${new Date(dive.t1*1000).toLocaleString("ja-JP")}<br>継続 ${Math.round(dive.dur_sec)}s / 航跡 ${dive.track_dist_m??"?"}m / CLAS直線 ${dive.clas_dist_m??"?"}m<br>自動回転 ${tr.rotAuto?tr.rotAuto.toFixed(1):0}° / 含意スケール ${dive.implied_scale??"-"}<br>${dive.note||""}`)
+         .addTo(g);
+      }
+      if(showWp && (bag.waypoints||[]).length){
+        // Waypoints are drawn per dive with THIS dive's own transform, so the
+        // track<->waypoint relation on the map equals the local-frame fit.
+        const wll = [];
+        bag.waypoints.forEach(w=>{
+          const ll = fn(w.x, wpFlipY ? -w.y : w.y); wll.push(ll);
+          L.marker(ll,{zIndexOffset:1500,icon:L.divIcon({className:"",
+            html:`<div class="wp-wrap"><div class="wp-dot">${w.num}</div></div>`,iconSize:[0,0],iconAnchor:[0,0]})})
+           .bindPopup(`<b>ウェイポイント ${w.num}</b>（${bag.name} / dive #${dive.idx}）<br>ローカル座標 x=${w.x}, y=${w.y}, z=${w.z}<br>この潜航の補正で配置（経路フィット中央値 ${dive.wp_fit_m??"-"} m）`).addTo(g);
+        });
+        if(wll.length>1) L.polyline(wll,{color:"#ffffff",weight:1.5,dashArray:"3 5",opacity:.85}).addTo(g);
+      }
+      if(showEnds){
+        const s = fn(dive.track_start[0],dive.track_start[1]);
+        const e = fn(dive.track_end[0],dive.track_end[1]);
+        const chip = (ll,bg,txt,dotBg)=>chipMk(ll,bg,txt,dotBg,-190);
+        chip(s,"#00a152",`▼ 潜航開始 ${diveSeq}`,"#00e676")
+         .bindPopup(`<b>潜航開始ポイント</b>（dive ${diveSeq} = ${bag.name} #${dive.idx}）<br>${new Date(dive.t0*1000).toLocaleString("ja-JP")}<br>補正後 ${s[0].toFixed(6)}, ${s[1].toFixed(6)}<br>CLAS開始アンカー: ${dive.clas_start?dive.clas_start.lat.toFixed(6)+", "+dive.clas_start.lon.toFixed(6):"なし"}`).addTo(g);
+        chip(e,"#d32f2f",`▲ 浮上 ${diveSeq}`,"#ff1744")
+         .bindPopup(`<b>浮上ポイント</b>（dive ${diveSeq} = ${bag.name} #${dive.idx}）<br>${new Date(dive.t1*1000).toLocaleString("ja-JP")}<br>補正後 ${e[0].toFixed(6)}, ${e[1].toFixed(6)}<br>CLAS終了アンカー: ${dive.clas_end?dive.clas_end.lat.toFixed(6)+", "+dive.clas_end.lon.toFixed(6):"なし"}`).addTo(g);
+      }
+      if(showAnchor && !anchorMarker && (!anchorBag || anchorBag===bag.name)){
+        anchorBag = bag.name;
+        const aRaw = tr.atStart ? dive.track_start : dive.track_end;
+        const s = fn(aRaw[0],aRaw[1]);
+        anchorMarker = L.marker(s,{draggable:true,title:"ドラッグで位置オフセット調整"})
+          .bindPopup("このマーカーをドラッグすると、選択中ログ全体の位置オフセットが動きます")
+          .addTo(map);
+        anchorMarker.on("dragend",()=>{
+          const ll = anchorMarker.getLatLng();
+          const base = tr.anchor;
+          // offset = dragged point - clas_start (in metres), minus rotation effect at start (=0) => direct
+          const east = rad(ll.lng-base.lon)*R_EARTH*Math.cos(rad(base.lat));
+          const north = rad(ll.lat-base.lat)*R_EARTH;
+          prm.offsetE = Math.round(east); prm.offsetN = Math.round(north);
+          syncControls(); render();
+        });
+      }
+    });
+    g.addTo(map);
+  });
+}
+
+function fmtT(t){ return new Date(t*1000).toLocaleString("ja-JP"); }
+function buildControls(){
+  const box = document.getElementById("bags"); box.innerHTML="";
+  if(!DATA) return;
+  DATA.bags.forEach((bag,bi)=>{
+    const prm = state[bag.name]; const color = COLORS[bi%COLORS.length];
+    const div = document.createElement("div"); div.className="bag";
+    let html = `<div class="hd"><span class="swatch" style="background:${color}"></span>
+      <label style="flex:1"><input type="checkbox" data-k="visible" ${prm.visible?"checked":""}> ${bag.name}</label></div>
+      <div class="small">CLAS点 ${bag.n_clas_raw} / 航跡点 ${bag.n_track_raw} / 潜航 ${bag.dives.length}件</div>`;
+    const ctl = (k,label,min,max,step,val,unit)=>`
+      <div class="row"><label>${label}</label>
+      <input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${val}">
+      <input type="number" data-k="${k}" step="${step}" value="${val}"><span>${unit}</span></div>`;
+    html += ctl("offsetE","位置 東西",-1000,1000,1,prm.offsetE,"m");
+    html += ctl("offsetN","位置 南北",-1000,1000,1,prm.offsetN,"m");
+    html += ctl("rot","回転(追加)",-180,180,0.1,prm.rot,"°");
+    html += ctl("scale","比率",10,300,1,prm.scale,"%");
+    html += `<div class="chk"><label>自動回転 <select data-k="rotMode">
+      <option value="nuc" ${prm.rotMode==="nuc"?"selected":""}>Nucleus方位（なければCLAS方位）</option>
+      <option value="clas" ${prm.rotMode==="clas"?"selected":""}>CLAS方位のみ</option>
+      <option value="none" ${prm.rotMode==="none"?"selected":""}>回転なし</option></select></label></div>
+      <div class="chk"><label><input type="checkbox" data-k="swap" ${prm.swap?"checked":""}> x↔y 入替（NED系ならON）</label>
+      <label><input type="checkbox" data-k="invX" ${prm.invX?"checked":""}> x反転</label>
+      <label><input type="checkbox" data-k="invY" ${prm.invY?"checked":""}> y反転</label></div>
+      <div class="row"><button data-act="reset" class="sub">このログをリセット</button>
+      <button data-act="anchor" class="sub">アンカーをこのログに</button></div>`;
+    bag.dives.forEach(d=>{
+      const mode = {"both":"CLAS開始+終了（方位合わせ）","start":"CLAS開始のみ","end":"CLAS終了のみ",
+                    "gps-both":"通常GPSで仮置き","gps-start":"通常GPS開始のみで仮置き","gps-end":"通常GPS終了のみで仮置き",
+                    "none":"アンカーなし：配置不可"}[d.anchor_mode||"none"];
+      html += `<div class="dive"><b>dive#${d.idx}</b> <label><input type="checkbox" class="dive-vis" data-idx="${d.idx}" ${hiddenDives.has(bag.name+"#"+d.idx)?"":"checked"}> 表示</label> ${fmtT(d.t0)} 〜 ${fmtT(d.t1)}（${Math.round(d.dur_sec)}s）<br>
+        配置：${mode}（開始gap ${d.clas_start?d.clas_start.gap_sec+"s":"-"} / 終了gap ${d.clas_end?d.clas_end.gap_sec+"s":"-"}）<br>
+        航跡 ${d.track_dist_m??"-"}m → CLAS直線 ${d.clas_dist_m??"-"}m / CLAS方位回転 ${d.rotation_deg??0}° / 含意スケール ${d.implied_scale??"-"}<br>
+        Nucleus回転（方位−yaw中央値）: <b>${d.nuc_diff_deg??"-"}°</b>（ばらつき ${d.nuc_diff_iqr??"-"}°）<br>
+        経路フィット（芝刈り経路への中央値距離）: <b>${d.wp_fit_m??"-"} m</b>
+        ${d.note?`<br><span class="note">${d.note}</span>`:""}</div>`;
+    });
+    div.innerHTML = html;
+    div.querySelectorAll("input,select").forEach(inp=>{
+      if(inp.classList.contains("dive-vis")){
+        inp.addEventListener("change",()=>{
+          const key = bag.name+"#"+inp.dataset.idx;
+          if(inp.checked) hiddenDives.delete(key); else hiddenDives.add(key);
+          render();
+        });
+        return;
+      }
+      inp.addEventListener("input",()=>{
+        const k = inp.dataset.k;
+        if(inp.type==="checkbox") prm[k]=inp.checked;
+        else if(inp.tagName==="SELECT") prm[k]=inp.value;
+        else prm[k]=parseFloat(inp.value);
+        syncControls(bag.name); render();
+      });
+    });
+    div.querySelector('[data-act="reset"]').addEventListener("click",()=>{ state[bag.name]=defaultParams(); buildControls(); render(); });
+    div.querySelector('[data-act="anchor"]').addEventListener("click",()=>{ anchorBag=bag.name; render(); });
+    box.appendChild(div);
+  });
+}
+function syncControls(onlyBag){
+  // keep paired range/number inputs in sync without rebuilding (avoids losing slider focus)
+  document.querySelectorAll("#bags .bag").forEach((div,bi)=>{
+    const bag = DATA.bags[bi]; if(onlyBag && bag.name!==onlyBag) return;
+    const prm = state[bag.name];
+    div.querySelectorAll("input[data-k]").forEach(inp=>{
+      const k=inp.dataset.k;
+      if(inp.type==="checkbox") inp.checked=!!prm[k]; else inp.value=prm[k];
+    });
+  });
+}
+
+function loadData(d, label){
+  DATA=d;
+  for(const bag of DATA.bags) if(!state[bag.name]) state[bag.name]=defaultParams();
+  document.getElementById("status").textContent = `${label}: ${DATA.bags.length} ログ読み込み`;
+  buildControls(); render(); fitAll();
+}
+function fitAll(){
+  const pts=[];
+  if(!DATA) return;
+  DATA.bags.forEach(b=>{ b.clas_all.forEach(p=>pts.push([p.lat,p.lon])); });
+  if(!pts.length) DATA.bags.forEach(b=>{ (b.gps_all||[]).forEach(p=>pts.push([p.lat,p.lon])); });
+  if(pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
+}
+document.getElementById("fit").addEventListener("click",fitAll);
+["showEnds","showAnchor","useGps","showFix","showFloat","showGpsPts","showAnchors","showWp","wpFlipY","showClasEnds","winSec","hideBadFit","fitThr"].forEach(id=>document.getElementById(id).addEventListener("change",render));
+document.getElementById("file").addEventListener("change",e=>{
+  const f=e.target.files[0]; if(!f) return;
+  f.text().then(txt=>{ try{ loadData(JSON.parse(txt), f.name); }catch(err){ alert("読み込み失敗: "+err.message); } });
+});
+
+function correctedPoints(){
+  const out=[];
+  if(!DATA) return out;
+  const useGps=document.getElementById("useGps").checked;
+  DATA.bags.forEach(bag=>{
+    const prm=state[bag.name]; if(!prm.visible) return;
+    bag.dives.forEach(dive=>{
+      const tr=diveTransform(bag,dive,prm,useGps); if(!tr) return;
+      const fn=tr.fn;
+      dive.points.forEach(p=>{
+        if(p.x==null||p.y==null) return;
+        const ll=fn(p.x,p.y);
+        out.push({bag:bag.name,dive:dive.idx,t:p.t,lat:ll[0],lon:ll[1],x:p.x,y:p.y,z:p.z,alt:p.alt,yaw:p.yaw});
+      });
+    });
+  });
+  return out;
+}
+function download(name, text, type){
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+document.getElementById("expGeo").addEventListener("click",()=>{
+  const feats=correctedPoints().map(p=>({type:"Feature",
+    properties:{bag:p.bag,dive:p.dive,t:p.t,z:p.z,alt:p.alt,yaw:p.yaw},
+    geometry:{type:"Point",coordinates:[p.lon,p.lat]}}));
+  download("auv_corrected_tracks.geojson", JSON.stringify({type:"FeatureCollection",features:feats},null,1),"application/geo+json");
+});
+document.getElementById("expCsv").addEventListener("click",()=>{
+  const rows=[["bag","dive","time_iso","lat","lon","x","y","z","alt","yaw"].join(",")];
+  correctedPoints().forEach(p=>rows.push([p.bag,p.dive,new Date(p.t*1000).toISOString(),p.lat.toFixed(7),p.lon.toFixed(7),p.x,p.y,p.z,p.alt,p.yaw].join(",")));
+  download("auv_corrected_tracks.csv", rows.join("\n"),"text/csv");
+});
+document.getElementById("expParam").addEventListener("click",()=>{
+  download("auv_alignment_params.json", JSON.stringify(state,null,1),"application/json");
+});
+
+// ---------------- KMZ survey sites overlay ----------------
+const kmzLayer = L.layerGroup();
+if(window.KMZ_DATA){
+  window.KMZ_DATA.points.forEach(p=>{
+    const icon = L.icon({iconUrl:`kmz-icon-${p.icon}.png`, iconSize:[26,26], iconAnchor:[13,13]});
+    L.marker([p.lat,p.lon],{icon, zIndexOffset:500})
+     .bindPopup(`<b>${p.name}</b><br>${p.desc||""}<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`)
+     .bindTooltip(p.name,{permanent:true, direction:"top", offset:[0,-16], className:"kmz-label"})
+     .addTo(kmzLayer);
+  });
+  kmzLayer.addTo(map);
+}
+document.getElementById("showKmz").addEventListener("change",e=>{
+  if(e.target.checked) kmzLayer.addTo(map); else map.removeLayer(kmzLayer);
+});
+
+// ---------------- distance measurement ----------------
+let measureOn=false, measurePts=[], measureMarkers=[];
+const measureLayer = L.layerGroup().addTo(map);
+const measureBtn = document.getElementById("measureBtn");
+function fmtDist(m){ return m>=1000 ? (m/1000).toFixed(3)+" km" : m.toFixed(1)+" m"; }
+function redrawMeasure(){
+  measureLayer.clearLayers(); measureMarkers=[];
+  let total=0;
+  const line = measurePts.map(p=>[p.lat,p.lng]);
+  if(line.length>1) L.polyline(line,{color:"#ffffff",weight:2,dashArray:"6 4"}).addTo(measureLayer);
+  measurePts.forEach((p,i)=>{
+    if(i>0) total += map.distance(measurePts[i-1], p);
+    const mk = L.marker(p,{draggable:true,icon:L.divIcon({className:"",html:`<div class="dist-label">${i===0?"開始":fmtDist(total)}</div>`,iconSize:null,iconAnchor:[14,10]})}).addTo(measureLayer);
+    mk.on("drag",()=>{ measurePts[i]=mk.getLatLng(); redrawMeasure(); });
+    measureMarkers.push(mk);
+  });
+  const segs = [];
+  for(let i=1;i<measurePts.length;i++) segs.push(fmtDist(map.distance(measurePts[i-1],measurePts[i])));
+  document.getElementById("measureInfo").textContent =
+    measurePts.length<2 ? `計測点 ${measurePts.length} 点。地図をクリックして追加。` :
+    `合計 ${fmtDist(total)}（${measurePts.length}点）／ 区間: ${segs.join(" + ")}`;
+}
+function setMeasure(on){
+  measureOn=on;
+  measureBtn.textContent = on ? "📏 計測モード ON" : "📏 計測モード OFF";
+  measureBtn.classList.toggle("on",on);
+  map.getContainer().style.cursor = on ? "crosshair" : "";
+  if(on) map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();
+}
+measureBtn.addEventListener("click",()=>setMeasure(!measureOn));
+document.getElementById("measureClear").addEventListener("click",()=>{ measurePts=[]; redrawMeasure(); });
+map.on("click",e=>{ if(!measureOn) return; measurePts.push(e.latlng); redrawMeasure(); });
+map.on("dblclick",()=>{ if(measureOn) setMeasure(false); });
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&measureOn) setMeasure(false); });
+
+if(window.AUV_DATA) loadData(window.AUV_DATA,"data.js");
+else fetch("data.json").then(r=>r.json()).then(d=>loadData(d,"data.json")).catch(()=>{});
+</script>
+</body>
+</html>
