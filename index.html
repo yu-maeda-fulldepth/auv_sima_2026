@@ -120,6 +120,19 @@
 </div>
 <div id="coord">—</div>
 
+<div id="threedModal">
+  <div id="threedHead">
+    <span id="threedTitle"></span>
+    <label><input type="checkbox" id="tdWp" checked> ウェイポイント</label>
+    <label><input type="checkbox" id="tdSpin"> 自動回転</label>
+    <label>縦軸 <select id="tdVert"><option value="depth">深度</option><option value="alt">高度（海底から）</option></select></label>
+    <label>色 <select id="tdColor"><option value="depth">深度</option><option value="alt">高度</option><option value="time">経過時間</option></select></label>
+    <span class="small">ドラッグ=回転 / ホイール=ズーム / 右ドラッグ=移動</span>
+    <button id="threedClose" style="margin-left:auto">閉じる ✕</button>
+  </div>
+  <div id="threedBody"></div>
+  <div id="threedInfo"></div>
+</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -814,18 +827,5 @@ window.addEventListener("resize", ()=>{
   td.renderer.setSize(body.clientWidth, body.clientHeight);
 });
 </script>
-<div id="threedModal">
-  <div id="threedHead">
-    <span id="threedTitle"></span>
-    <label><input type="checkbox" id="tdWp" checked> ウェイポイント</label>
-    <label><input type="checkbox" id="tdSpin"> 自動回転</label>
-    <label>縦軸 <select id="tdVert"><option value="depth">深度</option><option value="alt">高度（海底から）</option></select></label>
-    <label>色 <select id="tdColor"><option value="depth">深度</option><option value="alt">高度</option><option value="time">経過時間</option></select></label>
-    <span class="small">ドラッグ=回転 / ホイール=ズーム / 右ドラッグ=移動</span>
-    <button id="threedClose" style="margin-left:auto">閉じる ✕</button>
-  </div>
-  <div id="threedBody"></div>
-  <div id="threedInfo"></div>
-</div>
 </body>
 </html>
