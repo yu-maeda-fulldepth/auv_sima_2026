@@ -129,6 +129,7 @@
   <div id="threedHead">
     <span id="threedTitle"></span>
     <label><input type="checkbox" id="tdWp" checked> ウェイポイント</label>
+    <label><input type="checkbox" id="tdPitch" checked> ピッチ表示（黄色点線＝機首方向）</label>
     <label><input type="checkbox" id="tdSpin"> 自動回転</label>
     <label>縦軸 <select id="tdVert"><option value="depth">深度</option><option value="alt">高度（海底から）</option></select></label>
     <label>色 <select id="tdColor"><option value="depth">深度</option><option value="alt">高度</option><option value="time">経過時間</option></select></label>
@@ -712,7 +713,7 @@ else fetch("data.json").then(r=>r.json()).then(d=>loadData(d,"data.json")).catch
 // ================= 3D view (Three.js) =================
 // Local frame: three X = status x, three Y = up (= -depth), three Z = -status y
 // (north away from viewer). Waypoints use the same Y-flip as the 2D map.
-const td = { raf: 0, renderer: null, controls: null, wpGroup: null, geo: null, pts: [], zmax: 1, bag: null, dive: null };
+const td = { raf: 0, renderer: null, controls: null, wpGroup: null, pitchGroup: null, geo: null, pts: [], zmax: 1, bag: null, dive: null };
 function tdSprite(text, color){
   const c = document.createElement("canvas"); c.width = 256; c.height = 80;
   const g = c.getContext("2d");
@@ -837,6 +838,33 @@ function open3D(bag, dive){
   }
   wpGroup.visible = document.getElementById("tdWp").checked;
   scene.add(wpGroup);
+  // pitch indicators: short dashed segments along the body axis (yaw+pitch)
+  const pitchGroup = new THREE.Group(); td.pitchGroup = pitchGroup;
+  if(td.pts.length && td.pts[0].pitch!=null){
+    const n = td.pts.length, stepN = Math.max(1, Math.floor(n/70));
+    const L = Math.max(1.0, extent*0.05);
+    const verts = [];
+    const noseMat = new THREE.MeshBasicMaterial({ color: 0xffd740 });
+    for(let i=0;i<n;i+=stepN){
+      const p = td.pts[i];
+      const yw = (p.yaw||0)*Math.PI/180, pt = (p.pitch||0)*Math.PI/180;
+      // forward in local frame (x, y, depth-down): yaw from +x toward +y, pitch nose-up positive
+      const fx = Math.cos(pt)*Math.cos(yw), fy = Math.cos(pt)*Math.sin(yw), fz = -Math.sin(pt);
+      const f3 = new THREE.Vector3(fx, -fz, -fy);
+      const c = Vp(p);
+      const a = c.clone().addScaledVector(f3, -L/2), b = c.clone().addScaledVector(f3, L/2);
+      verts.push(a.x,a.y,a.z, b.x,b.y,b.z);
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.09, extent*0.004), 8, 6), noseMat);
+      dot.position.copy(b); pitchGroup.add(dot);
+    }
+    const pg = new THREE.BufferGeometry();
+    pg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(verts),3));
+    const pl = new THREE.LineSegments(pg, new THREE.LineDashedMaterial({ color: 0xffd740, dashSize: L*0.34, gapSize: L*0.22, transparent: true, opacity: .95 }));
+    pl.computeLineDistances();
+    pitchGroup.add(pl);
+  }
+  pitchGroup.visible = document.getElementById("tdPitch").checked;
+  scene.add(pitchGroup);
   const alts = td.pts.map(p=>p.alt).filter(a=>a!=null);
   const lockPts = dive.points.filter(p=>(p.alt||0)>0 && (p.alt||0)<=2);
   let statTxt = "";
@@ -844,6 +872,7 @@ function open3D(bag, dive){
     const st = arr => { const m = arr.reduce((a,b)=>a+b,0)/arr.length; const sd = Math.sqrt(arr.reduce((a,b)=>a+(b-m)*(b-m),0)/arr.length); return { m, sd, mn: Math.min(...arr), mx: Math.max(...arr) }; };
     const sa = st(lockPts.map(p=>p.alt)), sz = st(lockPts.map(p=>p.z||0));
     statTxt = ` ／ 海底付近（高度2 m以下）のブレ： 高度 平均 ${sa.m.toFixed(2)} m σ ${sa.sd.toFixed(2)} （${sa.mn.toFixed(2)}〜${sa.mx.toFixed(2)} m）、深度 平均 ${sz.m.toFixed(2)} m σ ${sz.sd.toFixed(2)} （${sz.mn.toFixed(2)}〜${sz.mx.toFixed(2)} m）`;
+    if(lockPts[0].pitch!=null){ const sp = st(lockPts.map(p=>p.pitch||0)); statTxt += `、ピッチ 平均 ${sp.m.toFixed(1)}° σ ${sp.sd.toFixed(1)} （${sp.mn.toFixed(1)}〜${sp.mx.toFixed(1)}°）`; }
   }
   document.getElementById("threedInfo").textContent =
     (vertMode==="alt" ? "縦軸=高度： グリッドが海底で、航跡は海底からの高さで表示（ウェイポイントは海底面に配置、高度0=未測位の点は除外）。高度の出所は Nucleus の altitude（auv_status.alt と同一値）。" : "縦軸=深度： グリッドが水面で、航跡は下向きが深度。")
@@ -865,10 +894,11 @@ function close3D(){
   if(td.renderer){ td.renderer.dispose(); td.renderer = null; }
   const body = document.getElementById("threedBody"); if(body) body.innerHTML = "";
   const modal = document.getElementById("threedModal"); if(modal) modal.style.display = "none";
-  td.geo = null; td.controls = null; td.wpGroup = null;
+  td.geo = null; td.controls = null; td.wpGroup = null; td.pitchGroup = null;
 }
 document.getElementById("threedClose").addEventListener("click", close3D);
 document.getElementById("tdWp").addEventListener("change", e=>{ if(td.wpGroup) td.wpGroup.visible = e.target.checked; });
+document.getElementById("tdPitch").addEventListener("change", e=>{ if(td.pitchGroup) td.pitchGroup.visible = e.target.checked; });
 document.getElementById("tdSpin").addEventListener("change", e=>{ if(td.controls) td.controls.autoRotate = e.target.checked; });
 document.getElementById("tdColor").addEventListener("change", ()=>{ tdColors(); tdLegendUpdate(); });
 ["tdScale","tdCmin","tdCmax"].forEach(id=>document.getElementById(id).addEventListener("change", ()=>{ tdColors(); tdLegendUpdate(); }));
