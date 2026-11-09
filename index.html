@@ -133,7 +133,7 @@
     <label><input type="checkbox" id="tdSpin"> 自動回転</label>
     <label>縦軸 <select id="tdVert"><option value="depth">深度</option><option value="alt">高度（海底から）</option></select></label>
     <label>色 <select id="tdColor"><option value="depth">深度</option><option value="alt">高度</option><option value="time">経過時間</option></select></label>
-    <label>色の範囲 <select id="tdScale"><option value="auto" selected>自動（最小〜最大）</option><option value="full">全体（0〜最大）</option><option value="manual">手動</option></select></label>
+    <label>色の範囲 <select id="tdScale"><option value="cruise" selected>航行区間の平均±</option><option value="auto">自動（最小〜最大）</option><option value="full">全体（0〜最大）</option><option value="manual">手動</option></select></label>
     <label>下限 <input type="number" id="tdCmin" step="0.1" style="width:60px"> 上限 <input type="number" id="tdCmax" step="0.1" style="width:60px"> m</label>
     <span class="small">ドラッグ=回転 / ホイール=ズーム / 右ドラッグ=移動</span>
     <button id="threedClose" style="margin-left:auto">閉じる ✕</button>
@@ -727,6 +727,17 @@ function tdSprite(text, color){
 function tdScaleRange(mode){
   const vals = td.pts.map(p=> mode==="alt" ? (p.alt||0) : (p.z||0));
   const sc = document.getElementById("tdScale").value;
+  if(sc==="cruise"){
+    // cruise segment = near-bottom points (0 < alt <= 2 m): from reaching the
+    // bottom and starting XY movement until just before surfacing.
+    const sub = td.pts.filter(p=>(p.alt||0)>0 && (p.alt||0)<=2);
+    const arr = (sub.length>10 ? sub : td.pts).map(p=> mode==="alt" ? (p.alt||0) : (p.z||0));
+    const mean = arr.reduce((a,b)=>a+b,0)/arr.length;
+    let R = 0; arr.forEach(v=>{ R = Math.max(R, Math.abs(v-mean)); });
+    if(R<=0) R = 1;
+    td.scaleLo = mean - R; td.scaleHi = mean + R; td.scaleMean = mean;
+    return [mean - R, mean + R];
+  }
   let lo, hi;
   if(sc==="manual"){
     lo = parseFloat(document.getElementById("tdCmin").value);
@@ -743,7 +754,9 @@ function tdLegendUpdate(){
   const bar = document.getElementById("tdLegBar");
   const mn = document.getElementById("tdLegMin"), mx = document.getElementById("tdLegMax"), nm = document.getElementById("tdLegName");
   if(!bar) return;
-  if(mode==="alt"){ bar.style.background = "linear-gradient(90deg,#ffa040,#35e0ff)"; mn.textContent = `${(td.scaleLo||0).toFixed(1)} m`; mx.textContent = `${(td.scaleHi||0).toFixed(1)} m`; nm.textContent = "色＝高度"; }
+  const cruise = document.getElementById("tdScale").value==="cruise" && mode!=="time";
+  if(cruise){ bar.style.background = "linear-gradient(90deg,#35e0ff,#f5f5f5 50%,#ff5040)"; mn.textContent = `${(td.scaleLo||0).toFixed(1)} m`; mx.textContent = `${(td.scaleHi||0).toFixed(1)} m`; nm.textContent = `色＝${mode==="alt"?"高度":"深度"}（航行平均 ${(td.scaleMean||0).toFixed(2)} m を中心に ±、青=平均未満 / 赤=平均超）`; }
+  else if(mode==="alt"){ bar.style.background = "linear-gradient(90deg,#ffa040,#35e0ff)"; mn.textContent = `${(td.scaleLo||0).toFixed(1)} m`; mx.textContent = `${(td.scaleHi||0).toFixed(1)} m`; nm.textContent = "色＝高度"; }
   else if(mode==="depth"){ bar.style.background = "linear-gradient(90deg,#35e0ff,#8a4bff)"; mn.textContent = `${(td.scaleLo||0).toFixed(1)} m`; mx.textContent = `${(td.scaleHi||0).toFixed(1)} m`; nm.textContent = "色＝深度"; }
   else { bar.style.background = "linear-gradient(90deg,#2bff6a,#ff5040)"; mn.textContent = "開始"; mx.textContent = "終了"; nm.textContent = "色＝経過時間"; }
 }
@@ -754,9 +767,16 @@ function tdColors(){
   const cA = new THREE.Color(0x35e0ff), cB = new THREE.Color(0x8a4bff), cC = new THREE.Color(0x2bff6a), cD = new THREE.Color(0xff5040);
   const cE = new THREE.Color(0xffa040), cF = new THREE.Color(0x35e0ff);
   const range = (mode==="alt" || mode==="depth") ? tdScaleRange(mode) : null;
+  const cruise = range && document.getElementById("tdScale").value==="cruise";
+  const cNeg = new THREE.Color(0x35e0ff), cMid = new THREE.Color(0xf5f5f5), cPos = new THREE.Color(0xff5040);
   td.pts.forEach((p,i)=>{
     let col;
-    if(mode==="alt"){ const f = Math.min(1, Math.max(0, ((p.alt||0)-range[0])/(range[1]-range[0]))); col = cE.clone().lerp(cF, f); }
+    if(cruise && (mode==="alt" || mode==="depth")){
+      const v = mode==="alt" ? (p.alt||0) : (p.z||0);
+      const t = Math.max(-1, Math.min(1, (v - td.scaleMean) / ((range[1]-range[0])/2)));
+      col = t<=0 ? cMid.clone().lerp(cNeg, -t) : cMid.clone().lerp(cPos, t);
+    }
+    else if(mode==="alt"){ const f = Math.min(1, Math.max(0, ((p.alt||0)-range[0])/(range[1]-range[0]))); col = cE.clone().lerp(cF, f); }
     else if(mode==="depth"){ const f = Math.min(1, Math.max(0, ((p.z||0)-range[0])/(range[1]-range[0]))); col = cA.clone().lerp(cB, f); }
     else { const f = td.pts.length>1 ? i/(td.pts.length-1) : 0; col = cC.clone().lerp(cD, f); }
     cols.setXYZ(i, col.r, col.g, col.b);
@@ -829,7 +849,7 @@ function open3D(bag, dive){
     wpos.push(v);
     const b = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.2, extent*0.011), 12, 10), new THREE.MeshBasicMaterial({ color: 0xffffff }));
     b.position.copy(v); wpGroup.add(b);
-    const s = tdSprite(String(w.num||""), "#ffffff"); s.position.copy(v); s.position.y += extent*0.04; s.scale.set(3.4,1.1,1); wpGroup.add(s);
+    const s = tdSprite(String(w.num||""), "#ffffff"); s.position.copy(v); s.position.y += extent*0.04; s.scale.set(2.4,0.75,1); wpGroup.add(s);
   });
   if(wpos.length>1){
     const wg = new THREE.BufferGeometry().setFromPoints(wpos);
@@ -841,8 +861,8 @@ function open3D(bag, dive){
   // pitch indicators: short dashed segments along the body axis (yaw+pitch)
   const pitchGroup = new THREE.Group(); td.pitchGroup = pitchGroup;
   if(td.pts.length && td.pts[0].pitch!=null){
-    const n = td.pts.length, stepN = Math.max(1, Math.floor(n/70));
-    const L = Math.max(1.0, extent*0.05);
+    const n = td.pts.length, stepN = Math.max(1, Math.floor(n/90));
+    const L = Math.max(1.2, extent*0.08);
     const verts = [];
     const noseMat = new THREE.MeshBasicMaterial({ color: 0xffd740 });
     for(let i=0;i<n;i+=stepN){
@@ -854,7 +874,7 @@ function open3D(bag, dive){
       const c = Vp(p);
       const a = c.clone().addScaledVector(f3, -L/2), b = c.clone().addScaledVector(f3, L/2);
       verts.push(a.x,a.y,a.z, b.x,b.y,b.z);
-      const dot = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.09, extent*0.004), 8, 6), noseMat);
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.12, extent*0.0065), 8, 6), noseMat);
       dot.position.copy(b); pitchGroup.add(dot);
     }
     const pg = new THREE.BufferGeometry();
