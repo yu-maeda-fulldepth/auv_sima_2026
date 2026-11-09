@@ -37,6 +37,16 @@
   .dist-label{background:rgba(10,18,34,.88);color:#fff;border:1px solid #40c4ff;border-radius:4px;padding:1px 5px;font-size:11px;white-space:nowrap}
   .kmz-label{background:rgba(255,255,255,.88);color:#222;border:1px solid #666;border-radius:3px;padding:0 4px;font-size:10.5px;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.4)}
   .kmz-label::before{display:none}
+  #threedModal{position:fixed;inset:0;background:#0b0e14;z-index:3000;display:none;flex-direction:column}
+  #threedHead{display:flex;gap:14px;align-items:center;padding:8px 12px;background:#141a26;color:#e8ecf3;flex-wrap:wrap}
+  #threedTitle{font-weight:700}
+  #threedBody{flex:1;min-height:0}
+  #threedBody canvas{display:block}
+  #threedInfo{padding:6px 12px;background:#141a26;color:#9fb2c8}
+  .dive-off{opacity:.45}
+  .dive-outview{opacity:.45}
+  .bag-outview{opacity:.6}
+  .site-badge{color:#ffd740;font-weight:700}
   #measureBtn.on{background:#b8860b}
   select{background:#0b1220;color:#e5edf7;border:1px solid #2b4a77;border-radius:4px}
 </style>
@@ -66,6 +76,7 @@
     <div class="chk"><label><input type="checkbox" id="wpFlipY" checked> ウェイポイントのY符号を反転（航跡座標系に合わせる）</label></div>
     <div class="chk"><label><input type="checkbox" id="showClasEnds" checked> CLAS潜航開始／浮上ポイント（青ラベル。CLASが無い・遅い浮上はGPS単独測位で代替）を表示</label></div>
     <div class="chk"><label><input type="checkbox" id="showKmz" checked> 調査地点（KMZ）を表示</label></div>
+    <div class="chk"><label><input type="checkbox" id="alignAll"> すべての潜航をCLAS一直線回転にする</label></div>
     <div class="chk"><label><input type="checkbox" id="hideBadFit"> 芝刈り航行できていない潜航を隠す</label>
       <span class="small">（経路フィット &gt; <select id="fitThr"><option value="1">1</option><option value="2" selected>2</option><option value="5">5</option></select> m の潜航。個別の表示ON/OFFは各ログの潜航欄でも可能）</span></div>
     <div class="chk"><label><input type="checkbox" id="showEnds" checked> 「▼潜航開始／▲浮上」ラベルを表示</label></div>
@@ -90,7 +101,9 @@
       アイコン＋地名ラベル＝調査地点（アップロードされたKMZ「調査地点一覧」より。クリックで水深などの説明）
     </div>
 
-    <h2>ログ別 調整</h2>
+    <h2>調査地点・ROSBAG別 調整</h2>
+    <div class="row"><button id="showAllBtn">すべて表示</button><span class="small">全ログ・全潜航を表示し、芝刈りフィルタも解除</span></div>
+    <div id="shownSummary" class="small" style="line-height:1.7;margin:4px 0 8px"></div>
     <div id="bags"></div>
 
     <h2>書き出し</h2>
@@ -108,6 +121,8 @@
 <div id="coord">—</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="data.js" onerror="void 0"></script>
 <script src="kmz_data.js" onerror="void 0"></script>
 <script>
@@ -139,6 +154,9 @@ map.on("mousemove",e=>{document.getElementById("coord").textContent =
 let DATA=null;
 const state = {};   // bagName -> params
 const hiddenDives = new Set();   // "bagName#diveIdx" manually hidden dives
+const alignDives = new Set();    // "bagName#diveIdx" dives using CLAS-collinear rotation
+let placedTracks = [];           // placed track geometry from the last render (for viewport sync)
+let lastShown = [];              // dives drawn in the last render
 const layers = {};  // bagName -> L.layerGroup
 let anchorMarker=null, anchorBag=null;
 
@@ -172,14 +190,14 @@ function diveTransform(bag, dive, prm, useGps){
   const anchor = pa.s || pa.e, atStart = !!pa.s;
   const aENU = toENU(atStart ? dive.track_start : dive.track_end, prm);
   const sENU = toENU(dive.track_start, prm), eENU = toENU(dive.track_end, prm);
-  let rotAuto = 0;
+  let rotAuto = 0, rotSrc = "なし";
   // Primary: Nucleus AHRS heading minus status yaw (median over the dive's
   // mission segment) -- the localiser's yaw zero shifts per dive, and this
   // difference recovers the local frame's rotation without needing an end
   // anchor. Fallback: CLAS start->end bearing, but only when both anchors
   // are fresh CLAS fixes at least 10 m apart (else the bearing is noise).
   if(prm.rotMode === "nuc" && dive.nuc_diff_deg != null){
-    rotAuto = dive.nuc_diff_deg;
+    rotAuto = dive.nuc_diff_deg; rotSrc = "Nucleus方位";
   } else if(prm.rotMode !== "none" && pa.s && pa.e && pa.sIsClas && pa.eIsClas
      && pa.s.gap_sec <= 120 && pa.e.gap_sec <= 120
      && map.distance([pa.s.lat,pa.s.lon],[pa.e.lat,pa.e.lon]) >= 10){
@@ -187,6 +205,23 @@ function diveTransform(bag, dive, prm, useGps){
     if(dx||dy){
       const tb = (deg(Math.atan2(dx,dy))+360)%360;
       rotAuto = wrap(bearing(pa.s.lat,pa.s.lon,pa.e.lat,pa.e.lon) - tb);
+      rotSrc = "CLAS方位";
+    }
+  }
+  // Collinear mode (user option): treat CLAS as ground truth and rotate so
+  // that dive point -> track end (surfacing point) -> CLAS surfacing point
+  // lie on one straight line. Overrides the mode above whenever the needed
+  // CLAS anchor exists; no freshness gate (explicit user choice).
+  if(alignDives.has(bag.name+"#"+dive.idx)){
+    const dx = eENU[0]-sENU[0], dy = eENU[1]-sENU[1];
+    if(atStart && dive.clas_end && (dx||dy)){
+      const tb = (deg(Math.atan2(dx,dy))+360)%360;
+      rotAuto = wrap(bearing(anchor.lat, anchor.lon, dive.clas_end.lat, dive.clas_end.lon) - tb);
+      rotSrc = "CLAS一直線";
+    } else if(!atStart && dive.clas_start && (dx||dy)){
+      const tb = (deg(Math.atan2(-dx,-dy))+360)%360;
+      rotAuto = wrap(bearing(anchor.lat, anchor.lon, dive.clas_start.lat, dive.clas_start.lon) - tb);
+      rotSrc = "CLAS一直線";
     }
   }
   const th = rad(rotAuto + prm.rot), sc = prm.scale/100;
@@ -198,7 +233,7 @@ function diveTransform(bag, dive, prm, useGps){
     const ny = -rx*sin + ry*cos;
     return destPoint(anchor.lat, anchor.lon, ex + prm.offsetE, ny + prm.offsetN);
   };
-  return {fn, src: pa.src, anchor, atStart, rotAuto};
+  return {fn, src: pa.src, anchor, atStart, rotAuto, rotSrc};
 }
 
 function render(){
@@ -218,6 +253,8 @@ function render(){
   const fitThr = parseFloat(document.getElementById("fitThr").value);
   const W = parseFloat(document.getElementById("winSec").value);
   let diveSeq = 0;
+  const shownDives = [];
+  placedTracks = [];
   DATA.bags.forEach((bag,bi)=>{
     const prm = state[bag.name]; if(!prm.visible) return;
     const color = COLORS[bi%COLORS.length];
@@ -249,6 +286,7 @@ function render(){
       diveSeq++;
       if(hiddenDives.has(bag.name+"#"+dive.idx)) return;   // manually hidden
       if(hideBadFit && dive.wp_fit_m!=null && dive.wp_fit_m > fitThr) return;   // not a lawnmower run
+      shownDives.push({seq: diveSeq, bag: bag.name, idx: dive.idx});
       const chipMk = (ll,bg,txt,dotBg,yPct)=>L.marker(ll,{zIndexOffset:2000,icon:L.divIcon({className:"",
         html:`<div class="se-wrap"><div class="se-chip" style="background:${bg};transform:translate(-50%,${yPct}%)">${txt}</div><div class="se-dot" style="background:${dotBg}"></div></div>`,
         iconSize:[0,0],iconAnchor:[0,0]})});
@@ -294,9 +332,10 @@ function render(){
         }
       }
       const latlngs = dive.points.filter(p=>p.x!=null&&p.y!=null).map(p=>fn(p.x,p.y));
+      placedTracks.push({bag: bag.name, idx: dive.idx, seq: diveSeq, pts: latlngs});
       if(latlngs.length>1){
         L.polyline(latlngs,{color,weight:2.5,opacity:tr.src==="GPS"?0.75:0.95,dashArray:tr.src==="GPS"?"7 6":null})
-         .bindPopup(`<b>${bag.name}</b> dive#${dive.idx}（${tr.src}アンカー${tr.atStart?"・開始":"・終了"}）<br>${new Date(dive.t0*1000).toLocaleString("ja-JP")} 〜 ${new Date(dive.t1*1000).toLocaleString("ja-JP")}<br>継続 ${Math.round(dive.dur_sec)}s / 航跡 ${dive.track_dist_m??"?"}m / CLAS直線 ${dive.clas_dist_m??"?"}m<br>自動回転 ${tr.rotAuto?tr.rotAuto.toFixed(1):0}° / 含意スケール ${dive.implied_scale??"-"}<br>${dive.note||""}`)
+         .bindPopup(`<b>${bag.name}</b> dive#${dive.idx}（${tr.src}アンカー${tr.atStart?"・開始":"・終了"}）<br>${new Date(dive.t0*1000).toLocaleString("ja-JP")} 〜 ${new Date(dive.t1*1000).toLocaleString("ja-JP")}<br>継続 ${Math.round(dive.dur_sec)}s / 航跡 ${dive.track_dist_m??"?"}m / CLAS直線 ${dive.clas_dist_m??"?"}m<br>自動回転 ${tr.rotAuto?tr.rotAuto.toFixed(1):0}°（${tr.rotSrc||"なし"}） / 含意スケール ${dive.implied_scale??"-"}<br>${dive.note||""}`)
          .addTo(g);
       }
       if(showWp && (bag.waypoints||[]).length){
@@ -340,17 +379,76 @@ function render(){
     });
     g.addTo(map);
   });
+  lastShown = shownDives;
+  updateViewPanel();
 }
 
+// Sync the right panel with the map's CURRENT VIEWPORT: only dives whose
+// placed track intersects the visible bounds count as "in view".
+function updateViewPanel(){
+  if(!DATA) return;
+  const b = map.getBounds();
+  const inView = placedTracks.filter(t => t.pts.some(p => b.contains(p)));
+  const shownSet = new Set(lastShown.map(s=>s.bag+"#"+s.idx));
+  const viewSet = new Set(inView.map(s=>s.bag+"#"+s.idx));
+  document.querySelectorAll(".dive[data-bag]").forEach(el=>{
+    const k = el.dataset.bag+"#"+el.dataset.idx;
+    el.classList.toggle("dive-off", !shownSet.has(k));
+    el.classList.toggle("dive-outview", shownSet.has(k) && !viewSet.has(k));
+  });
+  document.querySelectorAll("#bags .bag").forEach((div,bi)=>{
+    const bag = DATA.bags[bi]; if(!bag) return;
+    div.classList.toggle("bag-outview", bag.dives.length>0 && !inView.some(t=>t.bag===bag.name));
+  });
+  const sum = document.getElementById("shownSummary");
+  if(sum){
+    const byBag = {};
+    inView.forEach(s=>{ (byBag[s.bag] = byBag[s.bag]||[]).push(s.seq); });
+    const total = DATA.bags.reduce((a,x)=>a+x.dives.length,0);
+    const lines = DATA.bags.filter(x=>byBag[x.name]).map(x=>{
+      const site = bagSiteName(x);
+      return `${site?`【${site}】`:""}${x.name.replace("2026-10-","").replace(".bag","")}： 潜航 ${byBag[x.name].join("・")}`;
+    });
+    const sitesIn = window.KMZ_DATA ? window.KMZ_DATA.points.filter(p=>b.contains([p.lat,p.lon])).map(p=>p.name) : [];
+    sum.innerHTML = `現在の表示範囲内： 潜航 <b>${inView.length}件</b>（表示中 ${lastShown.length}/${total}件）`
+      + (lines.length ? "<br>" + lines.join("<br>") : "（範囲内に潜航なし）")
+      + (sitesIn.length ? `<br>範囲内の調査地点： ${sitesIn.join("、")}` : "")
+      + `<br>ウェイポイント： ${document.getElementById("showWp").checked?"表示":"非表示"} ／ 調査地点： ${document.getElementById("showKmz").checked?"表示":"非表示"}`;
+  }
+}
+map.on("moveend", updateViewPanel);
+
 function fmtT(t){ return new Date(t*1000).toLocaleString("ja-JP"); }
+function nearestSiteName(lat, lon){
+  if(!window.KMZ_DATA) return null;
+  let best=null, bd=Infinity;
+  for(const p of window.KMZ_DATA.points){
+    const dd = map.distance([lat,lon],[p.lat,p.lon]);
+    if(dd<bd){ bd=dd; best=p; }
+  }
+  return best ? best.name : null;
+}
+function bagSiteName(bag){
+  const votes = {};
+  for(const dv of bag.dives){
+    const a = dv.clas_start || dv.gps_start || dv.clas_end || dv.gps_end;
+    if(!a) continue;
+    const n = nearestSiteName(a.lat, a.lon);
+    if(n) votes[n] = (votes[n]||0)+1;
+  }
+  let best=null, bv=0;
+  for(const k in votes) if(votes[k]>bv){ bv=votes[k]; best=k; }
+  return best;
+}
 function buildControls(){
   const box = document.getElementById("bags"); box.innerHTML="";
   if(!DATA) return;
   DATA.bags.forEach((bag,bi)=>{
     const prm = state[bag.name]; const color = COLORS[bi%COLORS.length];
     const div = document.createElement("div"); div.className="bag";
+    const siteName = bagSiteName(bag);
     let html = `<div class="hd"><span class="swatch" style="background:${color}"></span>
-      <label style="flex:1"><input type="checkbox" data-k="visible" ${prm.visible?"checked":""}> ${bag.name}</label></div>
+      <label style="flex:1"><input type="checkbox" data-k="visible" ${prm.visible?"checked":""}> ${siteName?`<span class="site-badge">【${siteName}】</span>`:""}${bag.name}</label></div>
       <div class="small">CLAS点 ${bag.n_clas_raw} / 航跡点 ${bag.n_track_raw} / 潜航 ${bag.dives.length}件</div>`;
     const ctl = (k,label,min,max,step,val,unit)=>`
       <div class="row"><label>${label}</label>
@@ -364,6 +462,7 @@ function buildControls(){
       <option value="nuc" ${prm.rotMode==="nuc"?"selected":""}>Nucleus方位（なければCLAS方位）</option>
       <option value="clas" ${prm.rotMode==="clas"?"selected":""}>CLAS方位のみ</option>
       <option value="none" ${prm.rotMode==="none"?"selected":""}>回転なし</option></select></label></div>
+      <div class="chk"><label><input type="checkbox" class="align-bag"> このログの全潜航をCLAS一直線回転（潜航点・浮上点・CLAS浮上点）</label></div>
       <div class="chk"><label><input type="checkbox" data-k="swap" ${prm.swap?"checked":""}> x↔y 入替（NED系ならON）</label>
       <label><input type="checkbox" data-k="invX" ${prm.invX?"checked":""}> x反転</label>
       <label><input type="checkbox" data-k="invY" ${prm.invY?"checked":""}> y反転</label></div>
@@ -373,7 +472,7 @@ function buildControls(){
       const mode = {"both":"CLAS開始+終了（方位合わせ）","start":"CLAS開始のみ","end":"CLAS終了のみ",
                     "gps-both":"通常GPSで仮置き","gps-start":"通常GPS開始のみで仮置き","gps-end":"通常GPS終了のみで仮置き",
                     "none":"アンカーなし：配置不可"}[d.anchor_mode||"none"];
-      html += `<div class="dive"><b>dive#${d.idx}</b> <label><input type="checkbox" class="dive-vis" data-idx="${d.idx}" ${hiddenDives.has(bag.name+"#"+d.idx)?"":"checked"}> 表示</label> ${fmtT(d.t0)} 〜 ${fmtT(d.t1)}（${Math.round(d.dur_sec)}s）<br>
+      html += `<div class="dive" data-bag="${bag.name}" data-idx="${d.idx}"><b>dive#${d.idx}</b> <label><input type="checkbox" class="dive-vis" data-idx="${d.idx}" ${hiddenDives.has(bag.name+"#"+d.idx)?"":"checked"}> 表示</label> <label><input type="checkbox" class="dive-align" data-idx="${d.idx}" ${alignDives.has(bag.name+"#"+d.idx)?"checked":""}> 一直線</label> <button class="sub dive-3d" data-idx="${d.idx}">3D表示</button> ${fmtT(d.t0)} 〜 ${fmtT(d.t1)}（${Math.round(d.dur_sec)}s）<br>
         配置：${mode}（開始gap ${d.clas_start?d.clas_start.gap_sec+"s":"-"} / 終了gap ${d.clas_end?d.clas_end.gap_sec+"s":"-"}）<br>
         航跡 ${d.track_dist_m??"-"}m → CLAS直線 ${d.clas_dist_m??"-"}m / CLAS方位回転 ${d.rotation_deg??0}° / 含意スケール ${d.implied_scale??"-"}<br>
         Nucleus回転（方位−yaw中央値）: <b>${d.nuc_diff_deg??"-"}°</b>（ばらつき ${d.nuc_diff_iqr??"-"}°）<br>
@@ -381,12 +480,34 @@ function buildControls(){
         ${d.note?`<br><span class="note">${d.note}</span>`:""}</div>`;
     });
     div.innerHTML = html;
+    div.querySelectorAll(".dive-3d").forEach(btn=>btn.addEventListener("click",()=>{
+      const d = bag.dives.find(x=>x.idx==btn.dataset.idx);
+      if(d) open3D(bag, d);
+    }));
     div.querySelectorAll("input,select").forEach(inp=>{
       if(inp.classList.contains("dive-vis")){
         inp.addEventListener("change",()=>{
           const key = bag.name+"#"+inp.dataset.idx;
           if(inp.checked) hiddenDives.delete(key); else hiddenDives.add(key);
           render();
+        });
+        return;
+      }
+      if(inp.classList.contains("dive-align")){
+        inp.addEventListener("change",()=>{
+          const key = bag.name+"#"+inp.dataset.idx;
+          if(inp.checked) alignDives.add(key); else alignDives.delete(key);
+          refreshAlignChecks(); render();
+        });
+        return;
+      }
+      if(inp.classList.contains("align-bag")){
+        inp.addEventListener("change",()=>{
+          bag.dives.forEach(dv=>{
+            const key = bag.name+"#"+dv.idx;
+            if(inp.checked) alignDives.add(key); else alignDives.delete(key);
+          });
+          buildControls(); render();
         });
         return;
       }
@@ -402,6 +523,20 @@ function buildControls(){
     div.querySelector('[data-act="anchor"]').addEventListener("click",()=>{ anchorBag=bag.name; render(); });
     box.appendChild(div);
   });
+  refreshAlignChecks();
+}
+function refreshAlignChecks(){
+  if(!DATA) return;
+  let total=0, on=0;
+  document.querySelectorAll("#bags .bag").forEach((div,bi)=>{
+    const bag = DATA.bags[bi]; if(!bag) return;
+    let bt=0, bo=0;
+    bag.dives.forEach(dv=>{ bt++; total++; if(alignDives.has(bag.name+"#"+dv.idx)){ bo++; on++; } });
+    const cb = div.querySelector(".align-bag");
+    if(cb){ cb.checked = bt>0 && bo===bt; cb.indeterminate = bo>0 && bo<bt; }
+  });
+  const all = document.getElementById("alignAll");
+  if(all){ all.checked = total>0 && on===total; all.indeterminate = on>0 && on<total; }
 }
 function syncControls(onlyBag){
   // keep paired range/number inputs in sync without rebuilding (avoids losing slider focus)
@@ -488,6 +623,21 @@ if(window.KMZ_DATA){
 document.getElementById("showKmz").addEventListener("change",e=>{
   if(e.target.checked) kmzLayer.addTo(map); else map.removeLayer(kmzLayer);
 });
+document.getElementById("showAllBtn").addEventListener("click",()=>{
+  if(!DATA) return;
+  DATA.bags.forEach(bag=>{ state[bag.name].visible = true; });
+  hiddenDives.clear();
+  document.getElementById("hideBadFit").checked = false;
+  buildControls(); render();
+});
+document.getElementById("alignAll").addEventListener("change",e=>{
+  if(!DATA) return;
+  DATA.bags.forEach(bag=>bag.dives.forEach(dv=>{
+    const key = bag.name+"#"+dv.idx;
+    if(e.target.checked) alignDives.add(key); else alignDives.delete(key);
+  }));
+  buildControls(); render();
+});
 
 // ---------------- distance measurement ----------------
 let measureOn=false, measurePts=[], measureMarkers=[];
@@ -526,6 +676,156 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&measureOn) setMeas
 
 if(window.AUV_DATA) loadData(window.AUV_DATA,"data.js");
 else fetch("data.json").then(r=>r.json()).then(d=>loadData(d,"data.json")).catch(()=>{});
+
+// ================= 3D view (Three.js) =================
+// Local frame: three X = status x, three Y = up (= -depth), three Z = -status y
+// (north away from viewer). Waypoints use the same Y-flip as the 2D map.
+const td = { raf: 0, renderer: null, controls: null, wpGroup: null, geo: null, pts: [], zmax: 1, bag: null, dive: null };
+function tdSprite(text, color){
+  const c = document.createElement("canvas"); c.width = 256; c.height = 80;
+  const g = c.getContext("2d");
+  g.font = "bold 40px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+  g.shadowColor = "rgba(0,0,0,.9)"; g.shadowBlur = 6;
+  g.fillStyle = color || "#fff"; g.fillText(text, 128, 40);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthTest: false }));
+  sp.scale.set(6, 1.9, 1);
+  return sp;
+}
+function tdColors(){
+  if(!td.geo) return;
+  const mode = document.getElementById("tdColor").value;
+  const cols = td.geo.attributes.color;
+  const cA = new THREE.Color(0x35e0ff), cB = new THREE.Color(0x8a4bff), cC = new THREE.Color(0x2bff6a), cD = new THREE.Color(0xff5040);
+  const cE = new THREE.Color(0xffa040), cF = new THREE.Color(0x35e0ff);
+  td.pts.forEach((p,i)=>{
+    let col;
+    if(mode==="alt"){ const f = Math.min(1, Math.max(0, (p.alt||0)/(td.amax||1))); col = cE.clone().lerp(cF, f); }
+    else if(mode==="depth"){ const f = Math.min(1, Math.max(0, (p.z||0)/td.zmax)); col = cA.clone().lerp(cB, f); }
+    else { const f = td.pts.length>1 ? i/(td.pts.length-1) : 0; col = cC.clone().lerp(cD, f); }
+    cols.setXYZ(i, col.r, col.g, col.b);
+  });
+  cols.needsUpdate = true;
+}
+function open3D(bag, dive){
+  if(!window.THREE || !THREE.OrbitControls){ alert("3Dライブラリ（Three.js）を読み込めませんでした。ネット接続を確認してください。"); return; }
+  close3D();
+  td.bag = bag; td.dive = dive;
+  const vertMode = document.getElementById("tdVert").value;
+  // alt == 0 means "no bottom lock" (invalid), so drop those points in altitude mode
+  td.pts = dive.points.filter(p=>p.x!=null && p.y!=null && (vertMode!=="alt" || (p.alt||0)>0));
+  if(td.pts.length<2){ alert(vertMode==="alt" ? "この潜航には有効な高度データ（ボトムロック）がありません。" : "この潜航には表示できる航跡点がありません。"); return; }
+  const modal = document.getElementById("threedModal");
+  modal.style.display = "flex";
+  const site = bagSiteName(bag);
+  document.getElementById("threedTitle").textContent = `3D航跡 ${site?`【${site}】`:""}${bag.name} dive#${dive.idx}`;
+  const body = document.getElementById("threedBody");
+  const W = body.clientWidth || window.innerWidth, H = body.clientHeight || window.innerHeight-120;
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(W, H); renderer.setPixelRatio(window.devicePixelRatio || 1);
+  body.appendChild(renderer.domElement);
+  td.renderer = renderer;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0b0e14);
+  const camera = new THREE.PerspectiveCamera(55, W/H, 0.1, 5000);
+  let cx=0, cy=0; td.pts.forEach(p=>{ cx+=p.x; cy+=p.y; }); cx/=td.pts.length; cy/=td.pts.length;
+  td.zmax = Math.max(1, ...td.pts.map(p=>p.z||0));
+  td.amax = Math.max(1, ...td.pts.map(p=>p.alt||0));
+  const vert = p => vertMode==="alt" ? (p.alt||0) : -(p.z||0);
+  let vmin=1e9, vmax=-1e9;
+  td.pts.forEach(p=>{ const v = vert(p); vmin=Math.min(vmin,v); vmax=Math.max(vmax,v); });
+  let xmin=1e9,xmax=-1e9,ymin=1e9,ymax=-1e9;
+  td.pts.forEach(p=>{ xmin=Math.min(xmin,p.x); xmax=Math.max(xmax,p.x); ymin=Math.min(ymin,p.y); ymax=Math.max(ymax,p.y); });
+  const extent = Math.max(xmax-xmin, ymax-ymin, vmax-vmin, 5);
+  const Vp = p => new THREE.Vector3(p.x-cx, vert(p), -(p.y-cy));
+  const Vw = w => new THREE.Vector3(w.x-cx, vertMode==="alt" ? 0 : -(w.z||0), -((-w.y)-cy));
+  // track line + points
+  const pos = new Float32Array(td.pts.length*3), col = new Float32Array(td.pts.length*3);
+  td.pts.forEach((p,i)=>{ const v = Vp(p); pos.set([v.x,v.y,v.z], i*3); });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos,3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col,3));
+  td.geo = geo; tdColors();
+  scene.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true })));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ size: Math.max(0.12, extent*0.008), vertexColors: true })));
+  // start / end markers
+  const mkBall = (p, color, label)=>{
+    const b = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.25, extent*0.014), 16, 12), new THREE.MeshBasicMaterial({ color }));
+    b.position.copy(Vp(p)); scene.add(b);
+    const s = tdSprite(label, color===0x2bff6a ? "#5cff8a" : "#ff7a6a"); s.position.copy(b.position); s.position.y += extent*0.045; scene.add(s);
+  };
+  mkBall(td.pts[0], 0x2bff6a, "潜航開始");
+  mkBall(td.pts[td.pts.length-1], 0xff4444, "浮上");
+  // surface grid + depth axis
+  const grid = new THREE.GridHelper(extent*1.5, 10, 0x3a4a63, 0x22304a);
+  grid.material.transparent = true; grid.material.opacity = .6; scene.add(grid);
+  const axEnd = vertMode==="alt" ? vmax : vmin;
+  const axGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-extent*0.75,0,extent*0.75), new THREE.Vector3(-extent*0.75,axEnd,extent*0.75)]);
+  scene.add(new THREE.Line(axGeo, new THREE.LineBasicMaterial({ color: 0x7d93b2 })));
+  const s0 = tdSprite(vertMode==="alt" ? "海底 0m" : "水面 0m", "#9fb2c8"); s0.position.set(-extent*0.75, extent*0.03, extent*0.75); scene.add(s0);
+  const s1 = tdSprite(vertMode==="alt" ? `高度 ${td.amax.toFixed(0)}m` : `深度 ${td.zmax.toFixed(0)}m`, "#9fb2c8"); s1.position.set(-extent*0.75, axEnd + (vertMode==="alt" ? extent*0.03 : -extent*0.03), extent*0.75); scene.add(s1);
+  // waypoints (same bag set, Y flipped like the 2D map)
+  const wpGroup = new THREE.Group(); td.wpGroup = wpGroup;
+  const wps = (bag.waypoints||[]).slice().sort((a,b)=>(a.num||0)-(b.num||0));
+  const wpos = [];
+  wps.forEach(w=>{
+    const v = Vw(w);
+    wpos.push(v);
+    const b = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.2, extent*0.011), 12, 10), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    b.position.copy(v); wpGroup.add(b);
+    const s = tdSprite(String(w.num||""), "#ffffff"); s.position.copy(v); s.position.y += extent*0.04; s.scale.set(3.4,1.1,1); wpGroup.add(s);
+  });
+  if(wpos.length>1){
+    const wg = new THREE.BufferGeometry().setFromPoints(wpos);
+    const wl = new THREE.Line(wg, new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 1.2, gapSize: 0.8, transparent: true, opacity: .8 }));
+    wl.computeLineDistances(); wpGroup.add(wl);
+  }
+  wpGroup.visible = document.getElementById("tdWp").checked;
+  scene.add(wpGroup);
+  const alts = td.pts.map(p=>p.alt).filter(a=>a!=null);
+  document.getElementById("threedInfo").textContent =
+    (vertMode==="alt" ? "縦軸=高度： グリッドが海底で、航跡は海底からの高さで表示（ウェイポイントは海底面に配置、高度0=未測位の点は除外）。高度の出所は Nucleus の altitude（auv_status.alt と同一値）。" : "縦軸=深度： グリッドが水面で、航跡は下向きが深度。")
+    + ` 深度 0〜${td.zmax.toFixed(1)} m` + (alts.length?` ／ 高度(海底から) ${Math.min(...alts).toFixed(1)}〜${Math.max(...alts).toFixed(1)} m`:"")
+    + ` ／ 航跡点 ${td.pts.length} ／ 所要 ${Math.round(dive.dur_sec)} 秒 ／ ローカル座標のまま表示（x: 前後, y: 左右）`;
+  camera.position.set(extent*0.75, (vmin+vmax)/2 + extent*0.65, extent*0.95);
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, (vmin+vmax)/2, 0);
+  controls.enableDamping = true;
+  controls.autoRotate = document.getElementById("tdSpin").checked;
+  td.controls = controls;
+  const loop = ()=>{ td.raf = requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); };
+  loop();
+}
+function close3D(){
+  if(td.raf) cancelAnimationFrame(td.raf); td.raf = 0;
+  if(td.renderer){ td.renderer.dispose(); td.renderer = null; }
+  const body = document.getElementById("threedBody"); if(body) body.innerHTML = "";
+  const modal = document.getElementById("threedModal"); if(modal) modal.style.display = "none";
+  td.geo = null; td.controls = null; td.wpGroup = null;
+}
+document.getElementById("threedClose").addEventListener("click", close3D);
+document.getElementById("tdWp").addEventListener("change", e=>{ if(td.wpGroup) td.wpGroup.visible = e.target.checked; });
+document.getElementById("tdSpin").addEventListener("change", e=>{ if(td.controls) td.controls.autoRotate = e.target.checked; });
+document.getElementById("tdColor").addEventListener("change", tdColors);
+document.getElementById("tdVert").addEventListener("change", ()=>{ if(td.bag && td.dive) open3D(td.bag, td.dive); });
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") close3D(); });
+window.addEventListener("resize", ()=>{
+  if(!td.renderer) return;
+  const body = document.getElementById("threedBody");
+  td.renderer.setSize(body.clientWidth, body.clientHeight);
+});
 </script>
+<div id="threedModal">
+  <div id="threedHead">
+    <span id="threedTitle"></span>
+    <label><input type="checkbox" id="tdWp" checked> ウェイポイント</label>
+    <label><input type="checkbox" id="tdSpin"> 自動回転</label>
+    <label>縦軸 <select id="tdVert"><option value="depth">深度</option><option value="alt">高度（海底から）</option></select></label>
+    <label>色 <select id="tdColor"><option value="depth">深度</option><option value="alt">高度</option><option value="time">経過時間</option></select></label>
+    <span class="small">ドラッグ=回転 / ホイール=ズーム / 右ドラッグ=移動</span>
+    <button id="threedClose" style="margin-left:auto">閉じる ✕</button>
+  </div>
+  <div id="threedBody"></div>
+  <div id="threedInfo"></div>
+</div>
 </body>
 </html>
