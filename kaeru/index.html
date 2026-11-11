@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>わに帰宅ナビ（JRスタイル）</title>
+<style>
+:root{--green:#009b4d;--dark:#0b3d24;--bg:#f2f4f3;--card:#fff;--sub:#5a6b62;--line:#dfe6e2;--amber:#e8890c}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;background:var(--bg);color:#12241a;padding-bottom:76px}
+header{background:linear-gradient(90deg,var(--dark),var(--green));color:#fff;padding:14px 16px 12px;position:sticky;top:0;z-index:5}
+header .t{font-size:19px;font-weight:800;letter-spacing:.02em}
+header .s{font-size:12px;opacity:.9;margin-top:2px}
+main{padding:12px;max-width:640px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.card h2{font-size:13px;color:var(--sub);margin:0 0 8px;font-weight:700}
+.best{border:2px solid var(--green)}
+.best .big{font-size:26px;font-weight:800;line-height:1.25}
+.best .home{font-size:20px;font-weight:800;color:var(--green)}
+.row{display:flex;justify-content:space-between;align-items:center;padding:9px 2px;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:none}
+.row .tm{font-weight:700;font-size:16px}
+.row .dt{font-size:12px;color:var(--sub);text-align:right}
+button{background:var(--green);color:#fff;border:none;border-radius:10px;padding:11px 14px;font-size:15px;font-weight:700;width:100%}
+button.subbtn{background:#e7efe9;color:var(--dark)}
+select{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px;background:#fff}
+.note{font-size:12px;color:var(--sub);line-height:1.6}
+.warn{background:#fff7ea;border-color:#f0d9ae}
+a{color:var(--green);font-weight:700;word-break:break-all}
+nav{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);display:flex;z-index:6}
+nav div{flex:1;text-align:center;padding:9px 0 12px;font-size:12px;color:var(--sub);cursor:pointer}
+nav div.on{color:var(--green);font-weight:800;border-top:3px solid var(--green)}
+.tab{display:none}.tab.on{display:block}
+.tt{font-size:14px;line-height:1.9}.tt b{color:var(--green)}
+.tt .nx{background:#e8f6ee;border-radius:6px;padding:0 4px;font-weight:800}
+.diagram{position:relative;height:86px;margin:8px 4px}
+.dline{position:absolute;left:0;right:0;top:38px;height:4px;background:var(--green);border-radius:2px}
+.dsta{position:absolute;top:30px;width:16px;height:16px;background:#fff;border:3px solid var(--green);border-radius:50%;transform:translateX(-50%)}
+.dlab{position:absolute;top:56px;font-size:11px;transform:translateX(-50%);white-space:nowrap}
+.train{position:absolute;top:8px;width:22px;height:16px;background:var(--amber);border-radius:4px;transform:translateX(-50%);font-size:9px;color:#fff;text-align:center;line-height:16px;font-weight:700}
+.pill{display:inline-block;background:#e8f6ee;color:var(--dark);border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-right:6px}
+</style>
+</head>
+<body>
+<header>
+<div class="t">🚃 わに帰宅ナビ</div>
+<div class="s">どこからでも小岩の自宅へ ・ JR東日本アプリ風 v1</div>
+</header>
+<main>
+<section id="tab-home" class="tab on">
+  <div class="card">
+    <h2>現在地（GPS）</h2>
+    <div id="pos" style="font-size:15px;font-weight:700">位置情報を取得していません</div>
+    <div id="possub" class="note"></div>
+    <div style="height:8px"></div>
+    <button id="gpsbtn">📍 GPSで出発駅を判定する</button>
+    <div style="height:8px"></div>
+    <div class="note">出発駅は手動でも選べます（GPSが屋内・アプリ内ブラウザで取れない時用）</div>
+    <div style="height:6px"></div>
+    <select id="stasel"></select>
+  </div>
+  <div class="card best" id="bestcard" style="display:none">
+    <h2>FASTEST HOME ― 今から帰るなら</h2>
+    <div class="big" id="bestmain"></div>
+    <div id="bestdetail" style="font-size:14px;line-height:1.7;margin-top:6px"></div>
+    <div class="home" id="besthome"></div>
+  </div>
+  <div class="card" id="nextcard" style="display:none">
+    <h2>このあとの候補（自宅到着順）</h2>
+    <div id="nextlist"></div>
+  </div>
+  <div class="card warn">
+    <h2>正直な注記</h2>
+    <div class="note">総武線各駅停車の発時刻は JR東日本公式時刻表（浅草橋・千葉方面／小岩・三鷹方面、2026-11-11取得）から駅間時間で換算した実時刻表ベースです。乗換駅までの区間（山手線など）は所要時間＋平均待ちの<b>推定</b>です。遅延・ダイヤ乱れは反映されません（運行情報タブの公式リンクで確認を）。土日は休日ダイヤ、平日は平日ダイヤに自動切替しますが、祝日は v1 では平日扱いです。</div>
+  </div>
+</section>
+<section id="tab-tt" class="tab">
+  <div class="card">
+    <h2>時刻表（選択中の出発駅・小岩方面）</h2>
+    <div id="ttbody" class="tt"></div>
+    <div class="note" style="margin-top:8px">出典：JR東日本公式時刻表（浅草橋駅 千葉方面／小岩駅 三鷹方面）を基準に駅間時間で換算。乗換ハブ駅は推定時刻のため時刻表タブは総武線の駅で表示されます。</div>
+  </div>
+</section>
+<section id="tab-info" class="tab">
+  <div class="card">
+    <h2>運行情報（公式リンク）</h2>
+    <div style="line-height:2">
+      <div>中央・総武線（各駅停車）<br><a href="https://traininfo.jreast.co.jp/train_info/line.aspx?gid=1&lineid=chuo_sobuline_local" target="_blank" rel="noopener">https://traininfo.jreast.co.jp/train_info/line.aspx?gid=1&lineid=chuo_sobuline_local</a></div>
+      <div style="margin-top:8px">JR東日本（公式トップ）<br><a href="https://www.jreast.co.jp/" target="_blank" rel="noopener">https://www.jreast.co.jp/</a></div>
+    </div>
+    <div class="note" style="margin-top:8px">このアプリ自体はリアルタイム運行情報を取得していません。30分以上の遅れ等は上記公式ページの案内が正です。</div>
+  </div>
+  <div class="card">
+    <h2>データと前提</h2>
+    <div class="note">行き先は JR小岩駅で固定し、駅から自宅まで徒歩約11分として計算しています（自宅の住所・座標はアプリ内に含めていません）。総武線各駅停車の駅間所要時間は目安（浅草橋→小岩 約16分など）で、列車により1〜2分前後します。</div>
+  </div>
+</section>
+<section id="tab-pos" class="tab">
+  <div class="card">
+    <h2>走行位置（推定）― 浅草橋〜小岩</h2>
+    <div class="diagram" id="diagram"></div>
+    <div class="note">時刻表から「今この区間にいるはず」の小岩方面行き列車を推定表示しています。実際の走行位置ではありません。</div>
+  </div>
+  <div class="card">
+    <h2>外部の正確な経路検索</h2>
+    <div class="note">対応範囲外の場所や、バス・他社線が絡む場合はこちらが正確です（現在地→小岩駅、公共交通）。</div>
+    <div style="height:8px"></div>
+    <button class="subbtn" id="gmapbtn">Googleマップで現在地から小岩駅へ検索</button>
+  </div>
+</section>
+</main>
+<nav>
+<div data-tab="tab-home" class="on">🏠<br>ホーム</div>
+<div data-tab="tab-tt">🕐<br>時刻表</div>
+<div data-tab="tab-pos">🚃<br>走行位置</div>
+<div data-tab="tab-info">⚠️<br>運行情報</div>
+</nav>
+<script>
+// ==== 駅データ: to = 小岩までの乗車分数（西側は正、東側は負） ====
+const STATIONS=[
+{n:"三鷹",lat:35.7023,lon:139.5608,to:61},{n:"吉祥寺",lat:35.7020,lon:139.5795,to:57},
+{n:"西荻窪",lat:35.7037,lon:139.5994,to:54},{n:"荻窪",lat:35.7055,lon:139.6198,to:51},
+{n:"阿佐ヶ谷",lat:35.7046,lon:139.6353,to:48},{n:"高円寺",lat:35.7054,lon:139.6498,to:46},
+{n:"中野",lat:35.7058,lon:139.6652,to:43},{n:"東中野",lat:35.7069,lon:139.6840,to:41},
+{n:"大久保",lat:35.7012,lon:139.6974,to:39},{n:"新宿",lat:35.6896,lon:139.7006,to:37},
+{n:"代々木",lat:35.6831,lon:139.7020,to:35},{n:"千駄ヶ谷",lat:35.6810,lon:139.7112,to:33},
+{n:"信濃町",lat:35.6799,lon:139.7202,to:31},{n:"四ツ谷",lat:35.6857,lon:139.7302,to:29},
+{n:"市ヶ谷",lat:35.6912,lon:139.7357,to:26},{n:"飯田橋",lat:35.7017,lon:139.7450,to:24},
+{n:"水道橋",lat:35.7022,lon:139.7535,to:22},{n:"御茶ノ水",lat:35.6996,lon:139.7652,to:20},
+{n:"秋葉原",lat:35.6984,lon:139.7731,to:18},{n:"浅草橋",lat:35.6963,lon:139.7853,to:16},
+{n:"両国",lat:35.6945,lon:139.7914,to:14},{n:"錦糸町",lat:35.6961,lon:139.8136,to:11},
+{n:"亀戸",lat:35.6975,lon:139.8259,to:8},{n:"平井",lat:35.7063,lon:139.8449,to:6},
+{n:"新小岩",lat:35.7165,lon:139.8574,to:3},{n:"小岩",lat:35.7330,lon:139.8817,to:0},
+{n:"市川",lat:35.7293,lon:139.9079,to:-3},{n:"本八幡",lat:35.7208,lon:139.9269,to:-6},
+{n:"下総中山",lat:35.7146,lon:139.9434,to:-9},{n:"西船橋",lat:35.7070,lon:139.9592,to:-12},
+{n:"船橋",lat:35.7014,lon:139.9850,to:-15},{n:"東船橋",lat:35.7006,lon:140.0003,to:-18},
+{n:"津田沼",lat:35.6914,lon:140.0203,to:-21},{n:"幕張本郷",lat:35.6777,lon:140.0429,to:-25},
+{n:"幕張",lat:35.6594,lon:140.0577,to:-28},{n:"新検見川",lat:35.6526,lon:140.0731,to:-31},
+{n:"稲毛",lat:35.6368,lon:140.0923,to:-34},{n:"西千葉",lat:35.6225,lon:140.1034,to:-37},
+{n:"千葉",lat:35.6131,lon:140.1135,to:-40}];
+// ==== 乗換ハブ: via駅まで推定（line, 乗車分, 平均待ち分） ====
+const HUBS=[
+{n:"東京",lat:35.6812,lon:139.7671,via:"秋葉原",min:4,wait:3,line:"山手線"},
+{n:"神田",lat:35.6918,lon:139.7709,via:"秋葉原",min:2,wait:3,line:"山手線"},
+{n:"上野",lat:35.7141,lon:139.7774,via:"秋葉原",min:4,wait:3,line:"山手線"},
+{n:"新橋",lat:35.6655,lon:139.7583,via:"秋葉原",min:8,wait:3,line:"山手線"},
+{n:"浜松町",lat:35.6554,lon:139.7571,via:"秋葉原",min:10,wait:3,line:"山手線"},
+{n:"品川",lat:35.6285,lon:139.7387,via:"秋葉原",min:13,wait:3,line:"山手線"},
+{n:"池袋",lat:35.7289,lon:139.7104,via:"新宿",min:9,wait:4,line:"埼京線/山手線"},
+{n:"大手町",lat:35.6846,lon:139.7658,via:"秋葉原",min:7,wait:4,line:"丸ノ内線など"},
+{n:"日本橋",lat:35.6818,lon:139.7745,via:"浅草橋",min:5,wait:4,line:"都営浅草線"},
+{n:"浅草",lat:35.7117,lon:139.7985,via:"浅草橋",min:4,wait:4,line:"都営浅草線"},
+{n:"押上",lat:35.7103,lon:139.8132,via:"浅草橋",min:7,wait:4,line:"都営浅草線"},
+{n:"京成小岩",lat:35.7421,lon:139.8839,via:"__keiseikoiwa__",min:0,wait:0,line:"徒歩"}];
+const HOME_WALK=11; // 小岩駅→自宅 徒歩分
+const KEISEI_HOME_WALK=21; // 京成小岩駅→自宅 徒歩分
+// ==== 実時刻表（JR東日本公式, 2026-11-11取得）====
+// 浅草橋発・千葉方面（平日）
+const EAST_WD={4:[33,56],5:[22,32,41,47,57],6:[9,19,27,35,42,48,52],7:[1,6,11,15,19,23,27,31,34,38,42,47,51,55],8:[0,4,8,13,17,21,25,28,32,36,40,44,47,50,54,57],9:[0,3,6,10,14,17,21,24,28,32,36,40,45,50,56],10:[2,7,13,18,24,29,35,40,45,50,55],11:[1,7,13,18,24,29,35,40,46,51,57],12:[2,8,13,19,24,30,35,41,46,52,57],13:[3,8,14,20,26,30,35,41,46,52,57],14:[3,8,14,19,24,30,35,41,46,52,57],15:[3,9,15,20,25,30,35,41,46,52,57],16:[3,7,12,17,22,27,32,37,42,47,51,56],17:[1,5,10,14,18,23,27,32,36,39,43,46,50,53,56],18:[0,3,6,9,12,16,19,22,26,29,32,35,38,42,45,49,52,56],19:[0,4,8,12,16,21,25,30,34,39,43,48,53,58],20:[4,9,14,20,27,30,34,38,42,46,51,55],21:[0,4,9,13,18,23,28,33,39,44,50,55],22:[1,6,12,19,25,32,38,45,52,58],23:[5,12,20,28,35,42,50,56],0:[3,11,17,24,29]};
+// 浅草橋発・千葉方面（土曜・休日）
+const EAST_HD={4:[33,56],5:[22,36,51],6:[7,19,30,39,48,57],7:[7,13,19,25,31,36,42,47,52,57],8:[2,7,12,17,22,27,32,37,42,47,52,58],9:[3,8,13,18,23,29,34,40,45,51,56],10:[1,6,11,16,21,26,31,36,41,46,51,56],11:[1,6,11,16,21,26,31,36,41,46,51,56],12:[1,6,11,16,21,26,31,36,41,46,51,56],13:[1,6,11,16,21,26,31,36,42,46,51,56],14:[1,6,11,16,21,26,31,36,41,46,51,56],15:[1,6,11,16,21,26,31,36,41,46,51,56],16:[1,6,11,16,21,26,31,36,41,46,51,56],17:[1,6,11,16,21,26,30,34,39,44,49,54,59],18:[4,9,14,19,24,31,34,39,44,49,53,58],19:[4,9,15,20,26,31,37,42,48,53,58],20:[3,8,14,19,25,30,36,41,47,52,57],21:[3,8,13,19,24,29,34,40,45,51,57],22:[2,8,14,20,26,32,39,46,53,59],23:[6,14,23,32,42,52],0:[2,11,20,29]};
+// 小岩発・三鷹方面（平日）…東側の駅の発時刻換算に使用
+const WEST_WD={4:[44],5:[4,20,31,41,49,59],6:[6,12,17,21,25,30,35,40,45,50,55,59],7:[3,6,9,12,15,18,21,24,27,29,32,34,37,40,42,45,47,50,53,56,58],8:[1,4,6,9,12,15,17,20,23,27,31,35,39,43,46,50,54,58],9:[2,5,9,13,17,21,25,30,34,39,44,50,55],10:[1,7,13,19,24,29,35,40,46,51,57],11:[2,8,13,19,24,29,35,40,46,51,57],12:[2,8,13,19,24,30,35,41,46,52,57],13:[2,8,13,19,24,30,35,41,46,52,57],14:[2,8,14,19,25,30,36,41,46,52,57],15:[2,8,13,19,24,30,35,41,46,52,57],16:[2,7,13,18,24,29,34,39,43,48,53,59],17:[4,9,14,18,23,27,31,36,40,45,49,53,57],18:[2,6,10,15,19,24,28,33,37,41,45,49,53,57],19:[1,5,9,14,18,23,27,32,36,41,46,51,56],20:[1,6,11,16,21,26,31,36,41,46,52,57],21:[3,9,15,21,27,33,39,45,51,57],22:[4,11,18,24,31,37,44,52,59],23:[7,14,21,28,35,42,50,58],0:[7,17]};
+// 小岩発・三鷹方面（土曜・休日）
+const WEST_HD={4:[44],5:[4,20,41,55],6:[10,19,28,34,41,47,52,58],7:[3,9,13,17,22,26,31,35,40,45,50,55],8:[0,5,10,15,20,25,29,34,38,43,48,53,58],9:[3,8,13,18,23,28,33,38,43,48,53,58],10:[3,8,13,18,23,28,33,38,43,48,53,58],11:[3,8,13,18,23,28,33,38,43,48,53,58],12:[3,8,13,18,23,28,33,38,43,48,53,58],13:[3,8,13,18,23,28,33,38,43,48,53,58],14:[3,8,13,18,23,28,33,38,43,48,53,58],15:[3,8,13,18,23,28,33,38,43,48,53,58],16:[3,8,13,18,23,28,33,38,44,49,53,58],17:[3,8,13,18,23,28,33,38,43,48,53,58],18:[3,8,13,18,23,28,33,38,43,48,53,58],19:[3,8,13,18,23,28,33,38,43,48,53,58],20:[3,8,13,19,24,30,36,42,48,54],21:[0,7,13,20,26,33,39,46,53],22:[1,9,17,25,34,42,51],23:[0,9,19,29,40,50,58],0:[7,17]};
+// ==== ロジック ====
+const $=id=>document.getElementById(id);
+const pad=n=>String(n).padStart(2,"0");
+const fmt=d=>pad(d.getHours())+":"+pad(d.getMinutes());
+function isHD(d){const w=d.getDay();return w===0||w===6;}
+function hav(a,b,c,d){const R=6371,t=Math.PI/180;const x=(c-a)*t,y=(d-b)*t;const h=Math.sin(x/2)**2+Math.cos(a*t)*Math.cos(c*t)*Math.sin(y/2)**2;return 2*R*Math.asin(Math.sqrt(h));}
+function walkMin(km){return Math.max(1,Math.round(km/0.08));} // 80m/分
+let myPos=null, selEntry=null;
+// 基準時刻表から候補列車(Date)を生成: table, dayOffset基準
+function refTrains(wd,hd,baseDate,from,to){
+  const out=[];
+  for(let off=-1;off<=1;off++){
+    const day=new Date(baseDate.getFullYear(),baseDate.getMonth(),baseDate.getDate()+off);
+    const t=isHD(day)?hd:wd;
+    for(const h of Object.keys(t)){
+      for(const m of t[h]){
+        const d=new Date(day.getFullYear(),day.getMonth(),day.getDate(),Number(h),m);
+        if(Number(h)===0)d.setDate(d.getDate()+1);
+        if(d>=from&&d<=to)out.push(d);
+      }
+    }
+  }
+  return out.sort((a,b)=>a-b);
+}
+// 総武線の駅 entry について、小岩行き候補を返す [{dep,arrKoiwa}]
+function sobuPlans(st,ready,count){
+  const end=new Date(ready.getTime()+36*3600*1000);
+  let cands=[];
+  if(st.to>=0){ // 東行: 浅草橋時刻表が基準
+    const off=16-st.to;
+    const refs=refTrains(EAST_WD,EAST_HD,ready,new Date(ready.getTime()-off*60000-3600000),end);
+    // refTrainsは曜日種別を内部で再判定するため平日/休日テーブル切替は近似（境界跨ぎは誤差数分）
+    cands=refs.map(r=>{const dep=new Date(r.getTime()+off*60000);return{dep:dep,arr:new Date(dep.getTime()+st.to*60000)};});
+  }else{ // 西行: 小岩発時刻表が基準（その列車が東側の駅を先に発つ）
+    const ride=-st.to;
+    const refs=refTrains(WEST_WD,WEST_HD,ready,ready,end);
+    cands=refs.map(r=>{const arr=new Date(r.getTime()-60000);return{dep:new Date(arr.getTime()-ride*60000),arr:arr};});
+  }
+  return cands.filter(c=>c.dep>=ready).slice(0,count);
+}
+function plansFor(entry,now,walkTo){
+  const ready=new Date(now.getTime()+walkTo*60000);
+  if(entry.kind==="sta"&&entry.st.to===0){
+    return[{label:"もう小岩駅エリアです",dep:now,arr:now,home:new Date(now.getTime()+HOME_WALK*60000),via:"小岩駅から徒歩"}];
+  }
+  if(entry.kind==="hub"&&entry.hub.via==="__keiseikoiwa__"){
+    return[{label:"京成小岩駅から徒歩",dep:now,arr:now,home:new Date(ready.getTime()+KEISEI_HOME_WALK*60000),via:"京成小岩駅から徒歩 約"+KEISEI_HOME_WALK+"分"}];
+  }
+  if(entry.kind==="hub"){
+    const hub=entry.hub;const viaSt=STATIONS.find(s=>s.n===hub.via);
+    const atVia=new Date(ready.getTime()+(hub.wait+hub.min+3)*60000); // +3分は乗換余裕
+    const cs=sobuPlans(viaSt,atVia,6);
+    return cs.map(c=>({label:hub.line+" "+hub.n+"→"+hub.via+"（推定）",dep:c.dep,arr:c.arr,home:new Date(c.arr.getTime()+HOME_WALK*60000),via:hub.via+"駅で総武線各停に乗換（"+hub.via+"発 "+fmt(c.dep)+"）"}));
+  }
+  const cs=sobuPlans(entry.st,ready,6);
+  return cs.map(c=>({label:"総武線各駅停車 "+entry.st.n+"発",dep:c.dep,arr:c.arr,home:new Date(c.arr.getTime()+HOME_WALK*60000),via:"直通・乗換なし"}));
+}
+function allEntries(){
+  const a=STATIONS.map(s=>({kind:"sta",name:s.n,st:s,lat:s.lat,lon:s.lon}));
+  const b=HUBS.map(h=>({kind:"hub",name:h.n,hub:h,lat:h.lat,lon:h.lon}));
+  return a.concat(b);
+}
+function render(){
+  if(!selEntry)return;
+  const now=new Date();
+  const walkTo=myPos?walkMin(hav(myPos.lat,myPos.lon,selEntry.lat,selEntry.lon)):3;
+  const ps=plansFor(selEntry,now,myPos?walkTo:0);
+  if(!ps.length){$("bestcard").style.display="none";$("nextcard").style.display="none";return;}
+  const b=ps[0];
+  $("bestcard").style.display="block";$("nextcard").style.display="block";
+  if(selEntry.kind==="hub"){$("bestmain").innerHTML=selEntry.name+" → "+b.via;}else{$("bestmain").innerHTML=fmt(b.dep)+" "+selEntry.name+"発 → "+fmt(b.arr)+" 小岩着";}
+  $("bestdetail").innerHTML="<span class='pill'>"+b.via+"</span>"+(myPos?"駅まで徒歩 約"+walkTo+"分・":"")+"あと約"+Math.max(0,Math.round((b.dep-now)/60000))+"分で発車";
+  $("besthome").textContent="🏠 自宅到着 "+fmt(b.home)+" 頃";
+  $("nextlist").innerHTML=ps.slice(0,5).map(p=>"<div class='row'><div><span class='tm'>"+fmt(p.dep)+"発</span> <span style='font-size:13px'>"+p.label+"</span></div><div class='dt'>小岩 "+fmt(p.arr)+" 着<br>自宅 "+fmt(p.home)+"</div></div>").join("");
+  renderTT(selEntry,now);renderDiagram(now);
+}
+function renderTT(entry,now){
+  const el=$("ttbody");
+  if(entry.kind!=="sta"){el.innerHTML="<div class='note'>この駅は乗換ハブ（推定）のため、時刻表は乗換先の総武線駅でホームに表示されます。</div>";return;}
+  const st=entry.st;const day=isHD(now)?"土曜・休日ダイヤ":"平日ダイヤ";
+  let html="<div style='font-weight:800;margin-bottom:6px'>"+st.n+" → 小岩方面（"+day+"）</div>";
+  const start=new Date(now.getFullYear(),now.getMonth(),now.getDate(),4,0);
+  const deps=sobuPlans(st,start,400).filter(d=>d.dep<new Date(start.getTime()+24*3600*1000));
+  const byH={};deps.forEach(d=>{const h=d.dep.getHours();(byH[h]=byH[h]||[]).push(d);});
+  const nextT=sobuPlans(st,now,1)[0];
+  for(const h of Object.keys(byH).sort((a,b)=>a-b)){
+    html+="<div><b>"+h+"時</b> "+byH[h].map(d=>{const s=pad(d.dep.getMinutes());const isN=nextT&&d.dep.getTime()===nextT.dep.getTime();return isN?"<span class='nx'>"+s+"</span>":s;}).join(" ")+"</div>";
+  }
+  el.innerHTML=html||"<div class='note'>本日の残り列車がありません</div>";
+}
+function renderDiagram(now){
+  const seg=["浅草橋","両国","錦糸町","亀戸","平井","新小岩","小岩"];
+  const times={浅草橋:0,両国:2,錦糸町:5,亀戸:8,平井:11,新小岩:13,小岩:16};
+  const dg=$("diagram");let html="<div class='dline'></div>";
+  seg.forEach(s=>{const x=times[s]/16*100;html+="<div class='dsta' style='left:"+x+"%'></div><div class='dlab' style='left:"+x+"%'>"+s+"</div>";});
+  const refs=refTrains(EAST_WD,EAST_HD,now,new Date(now.getTime()-20*60000),new Date(now.getTime()+20*60000));
+  refs.forEach(r=>{const el=(now-r)/60000;if(el>=0&&el<=16){const x=el/16*100;html+="<div class='train' style='left:"+x+"%'>"+fmt(r)+"</div>";}});
+  dg.innerHTML=html;
+}
+function setPos(lat,lon){
+  myPos={lat:lat,lon:lon};
+  let best=null,bd=1e9;
+  for(const e of allEntries()){const d=hav(lat,lon,e.lat,e.lon);if(d<bd){bd=d;best=e;}}
+  selEntry=best;
+  $("stasel").value=best.name;
+  $("pos").textContent="最寄り駅："+best.name+"（直線 約"+bd.toFixed(2)+"km）";
+  $("possub").textContent="駅まで徒歩 約"+walkMin(bd)+"分として計算します。出発駅が違えば下のリストで変更できます。";
+  render();
+}
+// セレクト初期化
+(function(){
+  const sel=$("stasel");
+  sel.innerHTML=allEntries().map(e=>"<option value='"+e.name+"'>"+e.name+(e.kind==="hub"?"（乗換ハブ）":"")+"</option>").join("");
+  sel.addEventListener("change",()=>{selEntry=allEntries().find(e=>e.name===sel.value);render();});
+  selEntry=allEntries().find(e=>e.name==="浅草橋");sel.value="浅草橋";render();
+  setInterval(()=>{render();},30000);
+})();
+$("gpsbtn").addEventListener("click",()=>{
+  if(!navigator.geolocation){$("possub").textContent="このブラウザでは位置情報が使えません。Chromeで開き直してください。";return;}
+  $("pos").textContent="取得中…";
+  navigator.geolocation.getCurrentPosition(p=>{setPos(p.coords.latitude,p.coords.longitude);},
+    e=>{$("pos").textContent="位置情報を取得できませんでした";$("possub").textContent="許可ダイアログで「許可」を選んでください。アプリ内ブラウザで出ない場合は、このページをChromeで開いてください（位置許可は単独ページでないと出ないことがあります）。";},
+    {enableHighAccuracy:true,timeout:15000});
+});
+$("gmapbtn").addEventListener("click",()=>{
+  const o=myPos?myPos.lat+","+myPos.lon:"現在地";
+  location.href="https://www.google.com/maps/dir/?api=1&origin="+encodeURIComponent(o)+"&destination="+encodeURIComponent("小岩駅")+"&travelmode=transit";
+});
+// タブ切替
+document.querySelectorAll("nav div").forEach(d=>{
+  d.addEventListener("click",()=>{
+    document.querySelectorAll("nav div").forEach(x=>x.classList.remove("on"));d.classList.add("on");
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));$(d.dataset.tab).classList.add("on");
+  });
+});
+</script>
+</body>
+</html>
