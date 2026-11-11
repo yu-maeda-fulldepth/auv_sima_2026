@@ -930,5 +930,55 @@ window.addEventListener("resize", ()=>{
   td.renderer.setSize(body.clientWidth, body.clientHeight);
 });
 </script>
+<!-- === photo layer (added by build_all integration) === -->
+<script src="photos.js"></script>
+<script>
+(function(){
+  if(!window.AUV_PHOTOS) return;
+  const grp = L.layerGroup();
+  const fmtT = t => new Date(t*1000).toLocaleTimeString("ja-JP");
+  window.AUV_PHOTOS.forEach(rec => {
+    rec.frames.forEach((fr, i) => {
+      L.circleMarker([fr.lat, fr.lon], {radius:4.5, color:"#fff", weight:1.2, fillColor:"#ff4081", fillOpacity:0.9})
+        .bindPopup(`<div style="min-width:300px"><img src="${fr.img}" style="width:320px;display:block">
+          <b>${rec.video}</b> #${i+1} ／ 映像 ${fr.vt}s ／ ${fmtT(fr.t)}<br>
+          対底高度 ${fr.alt} m ／ 深度 ${fr.depth} m<br>${fr.lat.toFixed(6)}, ${fr.lon.toFixed(6)}</div>`, {maxWidth:340})
+        .addTo(grp);
+    });
+  });
+  grp.addTo(map);
+  L.control.layers(null, {"📷 写真": grp}, {position:"topright", collapsed:false}).addTo(map);
+})();
+</script>
+
+<!-- === simple-ortho layer === -->
+<script src="ortho.js"></script>
+<script>
+(function(){
+  if(!window.AUV_ORTHO) return;
+  const grp = L.layerGroup();
+  const overlays = window.AUV_ORTHO.map(rec =>
+    L.imageOverlay(rec.img, rec.bounds, {opacity: 0.85, interactive: false}).addTo(grp));
+  grp.addTo(map);
+  const ctl = L.control({position: "topright"});
+  ctl.onAdd = function(){
+    const div = L.DomUtil.create("div", "leaflet-bar");
+    div.style.cssText = "background:#fff;padding:6px 8px;font:12px/1.4 sans-serif";
+    div.innerHTML = '<label><input type="checkbox" id="orthoToggle" checked> 簡易オルソ</label>' +
+      '<br>透過 <input type="range" id="orthoOpacity" min="0" max="100" value="85" style="width:90px;vertical-align:middle">';
+    L.DomEvent.disableClickPropagation(div);
+    return div;
+  };
+  ctl.addTo(map);
+  const apply = () => {
+    const on = document.getElementById("orthoToggle").checked;
+    const op = document.getElementById("orthoOpacity").value / 100;
+    overlays.forEach(o => o.setOpacity(on ? op : 0));
+  };
+  document.addEventListener("change", e => { if(e.target.id === "orthoToggle" || e.target.id === "orthoOpacity") apply(); });
+  document.addEventListener("input",  e => { if(e.target.id === "orthoOpacity") apply(); });
+})();
+</script>
+
 </body>
 </html>
