@@ -164,9 +164,9 @@ function destPoint(lat,lon,eastM,northM){
   return [lat+dlat, lon+dlon];
 }
 
-const map = L.map("map",{renderer:L.canvas(),maxZoom:23,zoomSnap:0.25,zoomDelta:0.5,wheelPxPerZoomLevel:90}).setView([35.0,139.0],10);
-const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:23,maxNativeZoom:19,attribution:"© OpenStreetMap contributors"});
-const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxZoom:23,maxNativeZoom:18,attribution:"© Esri, Maxar, Earthstar Geographics"});
+const map = L.map("map",{renderer:L.canvas(),maxZoom:26,zoomSnap:0.25,zoomDelta:0.5,wheelPxPerZoomLevel:90}).setView([35.0,139.0],10);
+const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:26,maxNativeZoom:19,attribution:"© OpenStreetMap contributors"});
+const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxZoom:26,maxNativeZoom:18,attribution:"© Esri, Maxar, Earthstar Geographics"});
 sat.addTo(map);
 L.control.layers({"衛星 (Esri)":sat,"地図 (OSM)":osm}).addTo(map);
 L.control.scale({imperial:false}).addTo(map);
