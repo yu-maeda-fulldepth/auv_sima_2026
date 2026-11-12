@@ -80,7 +80,7 @@
     <div class="chk"><label><input type="checkbox" id="showClasEnds" checked> CLAS潜航開始／浮上ポイント（青ラベル。CLASが無い・遅い浮上はGPS単独測位で代替）を表示</label></div>
     <div class="chk"><label><input type="checkbox" id="showKmz" checked> 調査地点（KMZ）を表示</label></div>
     <div class="chk"><label><input type="checkbox" id="alignAll"> すべての潜航をCLAS一直線回転にする</label></div>
-    <div class="chk"><label><input type="checkbox" id="showNoSite"> 調査地点のない潜航も表示</label>
+    <div class="chk"><label><input type="checkbox" id="showNoSite" checked> 調査地点のない潜航も表示</label>
       <span class="small">（最寄り調査地点から <select id="siteThr"><option value="150">150</option><option value="200" selected>200</option><option value="300">300</option></select> m超は「地点なし」）</span></div>
     <div class="chk"><label><input type="checkbox" id="hideBadFit"> 芝刈り航行できていない潜航を隠す</label>
       <span class="small">（経路フィット &gt; <select id="fitThr"><option value="1">1</option><option value="2" selected>2</option><option value="5">5</option></select> m の潜航。個別の表示ON/OFFは各ログの潜航欄でも可能）</span></div>
@@ -120,7 +120,7 @@
       <button id="expParam" class="sub">調整パラメータ JSON</button>
       <button id="fit" class="sub">全体にフィット</button>
     </div>
-    <div class="small" style="margin-top:8px">軸の前提：既定は x=東, y=北（ENU）。実機が NED（x=北, y=東）なら各ログの「x↔y 入替」をON。z は表示用（ポップアップ）に保持しています。</div>
+    <div class="small" style="margin-top:8px">軸の前提：実測（Nucleus INSの対地速度・AHRS方位との照合、2026-11-12）により、ローカル座標は x=北, y=東（NED）と判明。既定で「x↔y 入替」がONです（ENU前提だと航跡が左右鏡像になります）。z は表示用（ポップアップ）に保持しています。</div>
   </div>
 </div>
 <div id="coord">—</div>
@@ -183,7 +183,7 @@ const layers = {};  // bagName -> L.layerGroup
 let anchorMarker=null, anchorBag=null;
 
 function defaultParams(){
-  return {visible:true, offsetE:0, offsetN:0, rot:0, scale:100, rotMode:"nuc", swap:false, invX:false, invY:false};
+  return {visible:true, offsetE:0, offsetN:0, rot:0, scale:100, rotMode:"nuc", swap:true, invX:false, invY:false};
 }
 function toENU(p, prm){
   let a = prm.swap ? p[1] : p[0];
@@ -495,7 +495,7 @@ function buildControls(){
       <option value="clas" ${prm.rotMode==="clas"?"selected":""}>CLAS方位のみ</option>
       <option value="none" ${prm.rotMode==="none"?"selected":""}>回転なし</option></select></label></div>
       <div class="chk"><label><input type="checkbox" class="align-bag"> このログの全潜航をCLAS一直線回転（潜航点・浮上点・CLAS浮上点）</label></div>
-      <div class="chk"><label><input type="checkbox" data-k="swap" ${prm.swap?"checked":""}> x↔y 入替（NED系ならON）</label>
+      <div class="chk"><label><input type="checkbox" data-k="swap" ${prm.swap?"checked":""}> x↔y 入替（NED系＝実測で確定、既定ON）</label>
       <label><input type="checkbox" data-k="invX" ${prm.invX?"checked":""}> x反転</label>
       <label><input type="checkbox" data-k="invY" ${prm.invY?"checked":""}> y反転</label></div>
       <div class="row"><button data-act="reset" class="sub">このログをリセット</button>
@@ -711,8 +711,9 @@ if(window.AUV_DATA) loadData(window.AUV_DATA,"data.js");
 else fetch("data.json").then(r=>r.json()).then(d=>loadData(d,"data.json")).catch(()=>{});
 
 // ================= 3D view (Three.js) =================
-// Local frame: three X = status x, three Y = up (= -depth), three Z = -status y
-// (north away from viewer). Waypoints use the same Y-flip as the 2D map.
+// Local frame (NED, measured 2026-11-12): three X = status y (east), three Y = up
+// (= -depth), three Z = -status x (north away from viewer).
+// Waypoints use the same Y-flip as the 2D map.
 const td = { raf: 0, renderer: null, controls: null, wpGroup: null, pitchGroup: null, geo: null, pts: [], zmax: 1, bag: null, dive: null };
 function tdSprite(text, color){
   const c = document.createElement("canvas"); c.width = 256; c.height = 80;
@@ -813,8 +814,8 @@ function open3D(bag, dive){
   let xmin=1e9,xmax=-1e9,ymin=1e9,ymax=-1e9;
   td.pts.forEach(p=>{ xmin=Math.min(xmin,p.x); xmax=Math.max(xmax,p.x); ymin=Math.min(ymin,p.y); ymax=Math.max(ymax,p.y); });
   const extent = Math.max(xmax-xmin, ymax-ymin, vmax-vmin, 5);
-  const Vp = p => new THREE.Vector3(p.x-cx, vert(p), -(p.y-cy));
-  const Vw = w => new THREE.Vector3(w.x-cx, vertMode==="alt" ? 0 : -(w.z||0), -((-w.y)-cy));
+  const Vp = p => new THREE.Vector3(p.y-cy, vert(p), -(p.x-cx));
+  const Vw = w => new THREE.Vector3((-w.y)-cy, vertMode==="alt" ? 0 : -(w.z||0), -(w.x-cx));
   // track line + points
   const pos = new Float32Array(td.pts.length*3), col = new Float32Array(td.pts.length*3);
   td.pts.forEach((p,i)=>{ const v = Vp(p); pos.set([v.x,v.y,v.z], i*3); });
@@ -870,7 +871,7 @@ function open3D(bag, dive){
       const yw = (p.yaw||0)*Math.PI/180, pt = (p.pitch||0)*Math.PI/180;
       // forward in local frame (x, y, depth-down): yaw from +x toward +y, pitch nose-up positive
       const fx = Math.cos(pt)*Math.cos(yw), fy = Math.cos(pt)*Math.sin(yw), fz = -Math.sin(pt);
-      const f3 = new THREE.Vector3(fx, -fz, -fy);
+      const f3 = new THREE.Vector3(fy, -fz, -fx);
       const c = Vp(p);
       const a = c.clone().addScaledVector(f3, -L/2), b = c.clone().addScaledVector(f3, L/2);
       verts.push(a.x,a.y,a.z, b.x,b.y,b.z);
