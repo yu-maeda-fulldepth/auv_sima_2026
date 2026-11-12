@@ -361,6 +361,13 @@ function render(){
          .bindPopup(`<b>${bag.name}</b> dive#${dive.idx}（${tr.src}アンカー${tr.atStart?"・開始":"・終了"}）<br>${new Date(dive.t0*1000).toLocaleString("ja-JP")} 〜 ${new Date(dive.t1*1000).toLocaleString("ja-JP")}<br>継続 ${Math.round(dive.dur_sec)}s / 航跡 ${dive.track_dist_m??"?"}m / CLAS直線 ${dive.clas_dist_m??"?"}m<br>自動回転 ${tr.rotAuto?tr.rotAuto.toFixed(1):0}°（${tr.rotSrc||"なし"}） / 含意スケール ${dive.implied_scale??"-"}<br>${dive.note||""}`)
          .addTo(g);
       }
+      if(dive.pred_points && dive.pred_points.length>1){
+        const pll = dive.pred_points.filter(p=>p.x!=null&&p.y!=null).map(p=>fn(p.x,p.y));
+        if(pll.length>1)
+          L.polyline(pll,{color:"#ff9800",weight:2.5,opacity:0.95,dashArray:"8 6"})
+           .bindPopup(`<b>予測航跡</b>（${bag.name} dive#${dive.idx}）<br>この潜航はbagの録画が潜航開始から約631秒後に始まっており、前半は未記録です。<br>橙の破線は計画経路（44ウェイポイント）に基づく予測航跡で、記録開始点で実測航跡に接続します。<br>この区間の簡易オルソ画像は、実写フレームを予測航跡上に配置したものです。`)
+           .addTo(g);
+      }
       if(showWp && (bag.waypoints||[]).length){
         // Waypoints are drawn per dive with THIS dive's own transform, so the
         // track<->waypoint relation on the map equals the local-frame fit.
@@ -976,6 +983,35 @@ window.addEventListener("resize", ()=>{
     overlays.forEach(o => o.setOpacity(on ? op : 0));
   };
   document.addEventListener("change", e => { if(e.target.id === "orthoToggle" || e.target.id === "orthoOpacity") apply(); });
+  document.addEventListener("input",  e => { if(e.target.id === "orthoOpacity") apply(); });
+})();
+</script>
+
+<!-- === extended simple-ortho layer (no4: real frames on predicted track) === -->
+<script src="ortho_ext.js"></script>
+<script>
+(function(){
+  if(!window.AUV_ORTHO_EXT) return;
+  const grp = L.layerGroup();
+  const overlays = window.AUV_ORTHO_EXT.map(rec =>
+    L.imageOverlay(rec.img, rec.bounds, {opacity: 0.85, interactive: false}).addTo(grp));
+  grp.addTo(map);
+  const ctl = L.control({position: "topright"});
+  ctl.onAdd = function(){
+    const div = L.DomUtil.create("div", "leaflet-bar");
+    div.style.cssText = "background:#fff;padding:6px 8px;font:12px/1.4 sans-serif";
+    div.innerHTML = '<label><input type="checkbox" id="orthoExtToggle" checked> 簡易オルソ拡張（no4・予測区間つき）</label>';
+    L.DomEvent.disableClickPropagation(div);
+    return div;
+  };
+  ctl.addTo(map);
+  const apply = () => {
+    const on = document.getElementById("orthoExtToggle").checked;
+    const opEl = document.getElementById("orthoOpacity");
+    const op = opEl ? opEl.value / 100 : 0.85;
+    overlays.forEach(o => o.setOpacity(on ? op : 0));
+  };
+  document.addEventListener("change", e => { if(e.target.id === "orthoExtToggle" || e.target.id === "orthoOpacity") apply(); });
   document.addEventListener("input",  e => { if(e.target.id === "orthoOpacity") apply(); });
 })();
 </script>

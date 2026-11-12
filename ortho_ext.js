@@ -1,0 +1,1 @@
+window.AUV_ORTHO_EXT = [{"video": "no4_ext", "bag": "2026-10-21-09-21-40.bag", "dive": 0, "img": "ortho/no4_ext.png", "bounds": [[34.29308675281234, 136.81117833859705], [34.293253037377276, 136.81138276824487]], "frames": 1042, "coverage_px": 1239397, "note": "no4 extended: first-half frames are real imagery placed on the plan-predicted track"}];
