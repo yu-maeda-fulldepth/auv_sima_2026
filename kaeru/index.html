@@ -38,10 +38,10 @@ nav div.on{color:var(--green);font-weight:800;border-top:3px solid var(--green)}
 .dlab{position:absolute;top:56px;font-size:11px;transform:translateX(-50%);white-space:nowrap}
 .train{position:absolute;top:8px;width:22px;height:16px;background:var(--amber);border-radius:4px;transform:translateX(-50%);font-size:9px;color:#fff;text-align:center;line-height:16px;font-weight:700}
 .pill{display:inline-block;background:#e8f6ee;color:var(--dark);border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-right:6px}
-.strip{background:#101410;border-radius:14px;padding:12px 10px;margin-bottom:12px;color:#e8eee9}
+.strip{background:#101410;background-image:linear-gradient(115deg,transparent 0%,rgba(0,155,77,.10) 45%,rgba(0,155,77,.02) 70%,transparent 100%);border-radius:14px;padding:12px 10px;margin-bottom:12px;color:#e8eee9}
 .strip .sh{font-size:15px;font-weight:800}
 .strip .ss{font-size:11px;color:#9fb3a6;margin:2px 0 10px}
-.pillars{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;-webkit-overflow-scrolling:touch}
+.pillars{display:flex;gap:8px;overflow-x:auto;padding:6px 2px 12px;align-items:flex-start;-webkit-overflow-scrolling:touch}
 .pillar{min-width:92px;max-width:92px;background:#20261f;border:1px solid #333d33;border-radius:14px;padding:9px 7px 10px;flex:0 0 auto}
 .pillar.first{border-color:var(--green);border-width:2px}
 .pillar .dur{font-size:12px;color:#cfe0d4}
@@ -268,7 +268,7 @@ function allEntries(){
   return a.concat(b);
 }
 let shiftN=0, filterMode="all";
-function pillHTML(p,isFirst,minDur){
+function pillHTML(p,isFirst,minDur,idx){
   const dur=Math.max(1,Math.round((p.arr-p.start)/60000));
   const total=p.legs.reduce((s,l)=>s+Math.max(1,(l.arr-l.dep)/60000),0);
   let bar="";
@@ -282,7 +282,7 @@ function pillHTML(p,isFirst,minDur){
   let tags="";
   if(dur===minDur)tags+="<span class='tag haya'>早</span>";
   if(p.transfers===0)tags+="<span class='tag raku'>楽</span>";
-  return "<div class='pillar"+(isFirst?" first":"")+"'><div class='dur'>"+dur+"分</div><div class='dep'>"+fmt(p.start)+"</div>"
+  return "<div class='pillar"+(isFirst?" first":"")+"' style='margin-top:"+((idx||0)*13)+"px'><div class='dur'>"+dur+"分</div><div class='dep'>"+fmt(p.start)+"</div>"
     +bar
     +"<div class='transf'>"+(p.transfers===0?"直通":"乗換<br>"+p.transfers+"回")+"</div>"
     +"<div class='arr'>"+fmt(p.arr)+"</div><div class='home'>🏠 "+fmt(p.home)+"</div>"
@@ -301,7 +301,7 @@ function render(){
   const wd=["日","月","火","水","木","金","土"][now.getDay()];
   $("striphead").textContent=selEntry.name+" → 小岩";
   $("stripsub").textContent=(now.getMonth()+1)+"月"+now.getDate()+"日（"+wd+"） "+fmt(now)+" 出発"+(myPos?" ・ 駅まで徒歩 約"+walkTo+"分":"")+(selEntry.kind==="hub"?" ・ 乗換区間は推定":"");
-  $("pillars").innerHTML=ps.map((p,i)=>pillHTML(p,i===0,minDur)).join("");
+  $("pillars").innerHTML=ps.map((p,i)=>pillHTML(p,i===0,minDur,i)).join("");
   $("resetbtn").style.visibility=shiftN>0?"visible":"hidden";
   renderTT(selEntry,now);renderDiagram(now);
 }
